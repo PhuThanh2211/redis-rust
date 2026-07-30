@@ -22,7 +22,31 @@ fn main() {
                             break; // client closed the connection (EOF)
                         }
 
-                        stream.write_all(b"+PONG\r\n").unwrap();
+                        let received = String::from_utf8_lossy(&buf[..bytes_read]);
+                        let parts: Vec<&str> = received.split("\r\n").collect();
+
+                        let args: Vec<&str> = parts.iter()
+                            .skip(1)
+                            .filter(|s| !s.starts_with('$') && !s.is_empty())
+                            .cloned()
+                            .collect();
+
+                        let command = args[0].to_uppercase();
+                        match command.as_str() {
+                            "PING" => {
+                                stream.write_all(b"+PONG\r\n").unwrap();
+                            }
+                            "ECHO" => {
+                                let argument = args[1];
+                                let response = format!("${}\r\n{}\r\n", argument.len(), argument);
+                                stream.write_all(response.as_bytes()).unwrap();
+                            }
+                            _ => {
+                                stream.write_all(b"-ERR unknow command\r\n").unwrap();
+                            }
+                        }
+
+
                     }
                 });
             }
