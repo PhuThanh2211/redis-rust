@@ -1,6 +1,9 @@
 #![allow(unused_imports)]
+
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 fn main() {
@@ -8,10 +11,12 @@ fn main() {
     println!("Redis Server listening here!!!");
 
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+    let store: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
 
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
+                let store = Arc::clone(&store);
                 thread::spawn(move || {
                     println!("Accept new connection");
 
@@ -40,6 +45,26 @@ fn main() {
                                 let argument = args[1];
                                 let response = format!("${}\r\n{}\r\n", argument.len(), argument);
                                 stream.write_all(response.as_bytes()).unwrap();
+                            }
+                            "SET" => {
+                                let key = args[1].to_string();
+                                let value = args[2].to_string();
+                                store.lock().unwrap().insert(key, value);
+                                stream.write_all(b"+OK\r\n").unwrap();
+                            }
+                            "GET" => {
+                                let key = args[1];
+                                let value = store.lock().unwrap().get(key).cloned();
+                                match value {
+                                    Some(v) => {
+                                        let response = format!("${}\r\n{}\r\n", v.len(), v);
+                                        stream.write_all(response.as_bytes()).unwrap();
+                                    }
+                                    None => {
+                                        // Null bulk string
+                                        stream.write_all(b"$-1\r\n").unwrap();
+                                    }
+                                }
                             }
                             _ => {
                                 stream.write_all(b"-ERR unknow command\r\n").unwrap();
