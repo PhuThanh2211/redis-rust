@@ -101,13 +101,14 @@ fn main() {
                             }
                             "RPUSH" => {
                                 let key = args[1].to_string();
-                                let value = args[2].to_string();
 
                                 let mut map = store.lock().unwrap();
 
                                 match map.entry(key).or_insert_with(|| RedisValue::List(Vec::new())) {
                                     RedisValue::List(list) => {
-                                        list.push(value);
+                                        for element in &args[2..] {
+                                            list.push(element.to_string());
+                                        }
                                         stream.write_all(format!(":{}\r\n", list.len()).as_bytes()).unwrap();
                                     }
                                     _ => {
