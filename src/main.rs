@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 
 use std::collections::HashMap;
+use std::fmt::format;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -115,6 +116,36 @@ fn main() {
                                         stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
                                     }
                                 }
+                            }
+                            "LRANGE" => {
+                                let key = args[1];
+                                let start_idx: usize = args[2].parse().unwrap();
+                                let mut stop_idx: usize = args[3].parse().unwrap();
+
+                                let map = store.lock().unwrap();
+
+                                let elements: Vec<String> = match map.get(key) {
+                                    Some(RedisValue::List(list)) => {
+                                        let len = list.len();
+                                        if stop_idx >= len {
+                                            stop_idx = len - 1;
+                                        }
+
+                                        if start_idx >= len || start_idx > stop_idx {
+                                            Vec::new()
+                                        } else {
+                                            list[start_idx..=stop_idx].to_vec()
+                                        }
+                                    }
+                                    _ => Vec::new()
+                                };
+
+                                drop(map);
+                                let mut response = format!("*{}\r\n", elements.len());
+                                for e in &elements {
+                                    response.push_str(&format!("${}\r\n{}\r\n", e.len(), e));
+                                }
+                                stream.write_all(response.as_bytes()).unwrap();
                             }
                             _ => {
                                 stream.write_all(b"-ERR unknow command\r\n").unwrap();
