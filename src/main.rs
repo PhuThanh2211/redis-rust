@@ -7,12 +7,17 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+enum RedisValue {
+    Str(String, Option<Instant>),
+    List(Vec<String>),
+}
+
 fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Redis Server listening here!!!");
 
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    let store: Arc<Mutex<HashMap<String, (String, Option<Instant>)>>> = Arc::new(Mutex::new(HashMap::new()));
+    let store: Arc<Mutex<HashMap<String, RedisValue>>> = Arc::new(Mutex::new(HashMap::new()));
 
     for stream in listener.incoming() {
         match stream {
@@ -52,12 +57,17 @@ fn main() {
                                 let value = args[2].to_string();
 
                                 let mut expiry: Option<Instant> = None;
-                                if args.len() >= 5 && args[3].to_uppercase() == "PX" {
-                                    let ms: u64 = args[4].parse().unwrap();
-                                    expiry = Some(Instant::now() + Duration::from_millis(ms));
+                                if args.len() >= 5 {
+                                    if args[3].to_uppercase() == "PX" {
+                                        let ms: u64 = args[4].parse().unwrap();
+                                        expiry = Some(Instant::now() + Duration::from_millis(ms));
+                                    } else if args[3].to_uppercase() == "EX" {
+                                        let secs: u64 = args[4].parse().unwrap();
+                                        expiry = Some(Instant::now() + Duration::from_secs(secs));
+                                    }
                                 }
 
-                                store.lock().unwrap().insert(key, (value, expiry));
+                                store.lock().unwrap().insert(key, RedisValue::Str(value, expiry));
                                 stream.write_all(b"+OK\r\n").unwrap();
                             }
                             "GET" => {
@@ -65,12 +75,16 @@ fn main() {
                                 let mut map = store.lock().unwrap();
 
                                 let result = match map.get(key) {
-                                    Some((value, Some(deadline)))
+                                    Some(RedisValue::Str(value, Some(deadline)))
                                     if Instant::now() >= *deadline => {
                                         map.remove(key);        // lazily delete expired key
                                         None
                                     }
-                                    Some((value, _)) => Some(value.clone()),
+                                    Some(RedisValue::Str(value, _)) => Some(value.clone()),
+                                    Some(RedisValue::List(_)) => {
+                                        stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
+                                        continue;
+                                    },
                                     None => None,
                                 };
 
@@ -82,6 +96,22 @@ fn main() {
                                     None => {
                                         // Null bulk string
                                         stream.write_all(b"$-1\r\n").unwrap();
+                                    }
+                                }
+                            }
+                            "RPUSH" => {
+                                let key = args[1].to_string();
+                                let value = args[2].to_string();
+
+                                let mut map = store.lock().unwrap();
+
+                                match map.entry(key).or_insert_with(|| RedisValue::List(Vec::new())) {
+                                    RedisValue::List(list) => {
+                                        list.push(value);
+                                        stream.write_all(format!(":{}\r\n", list.len()).as_bytes()).unwrap();
+                                    }
+                                    _ => {
+                                        stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap();
                                     }
                                 }
                             }
