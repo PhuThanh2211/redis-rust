@@ -14,7 +14,7 @@ pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
         match read_command(&mut reader)? {
             Some(args) => {
                 let reply = dispatch(&args, &store);
-                writer.write_all(&reply.encode());
+                writer.write_all(&reply.encode())?;
             },
             None => break, // Client closed the connection (EOF)
         }

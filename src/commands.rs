@@ -22,6 +22,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "LPUSH" => cmd_lpush(args, store),
         "LRANGE" => cmd_lrange(args, store),
         "LLEN" => cmd_llen(args, store),
+        "LPOP" => cmd_lpop(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -156,6 +157,34 @@ fn cmd_llen(args: &[Vec<u8>], store: &Store) -> Resp {
         Some(RedisValue::List(list)) => Resp::Integer(list.len() as i64),
         _ => Resp::Integer(0),
     }
+}
+
+fn cmd_lpop(args: &[Vec<u8>], store: &Store) -> Resp {
+    if args.len() < 2 {
+        return wrong_args("lpop");
+    }
+
+    let key = as_str(&args[1]);
+    let mut map = store.lock().unwrap();
+
+    let popped = match map.get_mut(&key) {
+        Some(RedisValue::List(list)) => {
+            if (list.is_empty()) {
+                return Resp::Bulk(None);
+            }
+
+            list.remove(0)
+        }
+        Some(RedisValue::Str(_, _)) => return wrong_type(),
+        None => return Resp::Bulk(None),
+    };
+
+    // borrow of `list` is over here, so we can touch `map` again
+    if matches!(map.get(&key), Some(RedisValue::List(l)) if l.is_empty()) {
+        map.remove(&key);
+    }
+
+    Resp::Bulk(Some(popped.into_bytes()))
 }
 
 /// Clamp a possibly-negative index into `[0, len]`.
