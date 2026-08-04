@@ -160,23 +160,54 @@ fn cmd_llen(args: &[Vec<u8>], store: &Store) -> Resp {
 }
 
 fn cmd_lpop(args: &[Vec<u8>], store: &Store) -> Resp {
-    if args.len() < 2 {
+    if args.len() < 3 {
         return wrong_args("lpop");
     }
 
     let key = as_str(&args[1]);
+
+    // Optional count argument: LPOP key [count]
+    let count: Option<usize> = match args.get(2) {
+        Some(raw) => match as_str(raw).parse::<i64>() {
+            Ok(n) if n >= 0 => Some(n as usize),
+            _ => return Resp::Error("ERR value is out of range, must be positive".into()),
+        },
+        None => None
+    };
+
     let mut map = store.lock().unwrap();
 
-    let popped = match map.get_mut(&key) {
+    let result = match map.get_mut(&key) {
         Some(RedisValue::List(list)) => {
-            if (list.is_empty()) {
-                return Resp::Bulk(None);
+            if list.is_empty() {
+                return match count {
+                    Some(_) => Resp::Array(vec![]),
+                    None => Resp::Bulk(None),
+                };
             }
 
-            list.remove(0)
+            match count {
+                None => {
+                    // single-element form
+                    Resp::Bulk(Some(list.remove(0).into_bytes()))
+                }
+                Some(n) => {
+                    let n = n.min(list.len());
+                    let popped: Vec<Resp> = list
+                        .drain(0..n)
+                        .map(|s| Resp::Bulk(Some(s.into_bytes())))
+                        .collect();
+                    Resp::Array(popped)
+                }
+            }
         }
         Some(RedisValue::Str(_, _)) => return wrong_type(),
-        None => return Resp::Bulk(None),
+        None => {
+            return match count {
+                Some(_) => Resp::Array(vec![]),
+                None => Resp::Bulk(None),
+            };
+        }
     };
 
     // borrow of `list` is over here, so we can touch `map` again
@@ -184,7 +215,7 @@ fn cmd_lpop(args: &[Vec<u8>], store: &Store) -> Resp {
         map.remove(&key);
     }
 
-    Resp::Bulk(Some(popped.into_bytes()))
+    result
 }
 
 /// Clamp a possibly-negative index into `[0, len]`.
