@@ -160,7 +160,7 @@ fn cmd_llen(args: &[Vec<u8>], store: &Store) -> Resp {
 }
 
 fn cmd_lpop(args: &[Vec<u8>], store: &Store) -> Resp {
-    if args.len() < 3 {
+    if args.len() < 2 {
         return wrong_args("lpop");
     }
 
