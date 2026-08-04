@@ -19,6 +19,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "SET" => cmd_set(args, store),
         "GET" => cmd_get(args, store),
         "RPUSH" => cmd_rpush(args, store),
+        "LPUSH" => cmd_lpush(args, store),
         "LRANGE" => cmd_lrange(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
@@ -79,6 +80,25 @@ fn cmd_rpush(args: &[Vec<u8>], store: &Store) -> Resp {
         RedisValue::List(list) => {
             for element in &args[2..] {
                 list.push(as_str(element));
+            }
+            Resp::Integer(list.len() as i64)
+        }
+        _ => wrong_type(),
+    }
+}
+
+fn cmd_lpush(args: &[Vec<u8>], store: &Store) -> Resp {
+    if args.len() < 3 {
+        return wrong_args("lpush");
+    }
+
+    let key = as_str(&args[1]);
+    let mut map = store.lock().unwrap();
+
+    match map.entry(key).or_insert_with(|| RedisValue::List(Vec::new())) {
+        RedisValue::List(list) => {
+            for element in &args[2..] {
+                list.insert(0, as_str(element)); // prepend -> reverses input order
             }
             Resp::Integer(list.len() as i64)
         }
