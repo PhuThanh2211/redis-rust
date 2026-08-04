@@ -21,6 +21,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "RPUSH" => cmd_rpush(args, store),
         "LPUSH" => cmd_lpush(args, store),
         "LRANGE" => cmd_lrange(args, store),
+        "LLEN" => cmd_llen(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -140,6 +141,20 @@ fn cmd_lrange(args: &[Vec<u8>], store: &Store) -> Resp {
         },
         Some(RedisValue::Str(_, _)) => wrong_type(),
         None => Resp::Array(vec![]),
+    }
+}
+
+fn cmd_llen(args: &[Vec<u8>], store: &Store) -> Resp {
+    if args.len() < 2 {
+        return wrong_args("llen");
+    }
+
+    let key = as_str(&args[1]);
+    let map = store.lock().unwrap();
+
+    match map.get(&key) {
+        Some(RedisValue::List(list)) => Resp::Integer(list.len() as i64),
+        _ => Resp::Integer(0),
     }
 }
 
