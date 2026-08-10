@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 pub enum RedisValue {
@@ -7,8 +7,26 @@ pub enum RedisValue {
     List(Vec<String>),
 }
 
-pub type Store = Arc<Mutex<HashMap<String, RedisValue>>>;
+pub struct Inner {
+    pub map: HashMap<String, RedisValue>,
+    pub waiters: HashMap<String, VecDeque<u64>>, // FIFO tickets per key
+    pub next_ticket: u64,
+}
+
+pub struct Db {
+    pub inner: Mutex<Inner>,
+    pub on_push: Condvar,
+}
+
+pub type Store = Arc<Db>;
 
 pub fn new_store() -> Store {
-    Arc::new(Mutex::new(HashMap::new()))
+    Arc::new(Db {
+        inner: Mutex::new(Inner {
+            map: HashMap::new(),
+            waiters: HashMap::new(),
+            next_ticket: 0
+        }),
+        on_push: Condvar::new()
+    })
 }

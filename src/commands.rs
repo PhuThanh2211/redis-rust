@@ -23,6 +23,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "LRANGE" => cmd_lrange(args, store),
         "LLEN" => cmd_llen(args, store),
         "LPOP" => cmd_lpop(args, store),
+        "BLPOP" => cmd_blpop(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -46,7 +47,7 @@ fn cmd_set(args: &[Vec<u8>], store: &Store) -> Resp {
         }
     }
 
-    store.lock().unwrap().insert(key, RedisValue::Str(value, expiry));
+    store.inner.lock().unwrap().map.insert(key, RedisValue::Str(value, expiry));
 
     Resp::Simple("OK".into())
 }
@@ -57,11 +58,11 @@ fn cmd_get(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 
     let key = as_str(&args[1]);
-    let mut map = store.lock().unwrap();
+    let mut guard = store.inner.lock().unwrap();
 
-    match map.get(&key) {
+    match guard.map.get(&key) {
         Some(RedisValue::Str(_, Some(deadline))) if Instant::now() >= *deadline => {
-            map.remove(&key); // Lazily delete expired key
+            guard.map.remove(&key); // Lazily delete expired key
             Resp::Bulk(None)
         }
         Some(RedisValue::Str(value, _)) => Resp::Bulk(Some(value.clone().into_bytes())),
@@ -76,17 +77,22 @@ fn cmd_rpush(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 
     let key = as_str(&args[1]);
-    let mut map = store.lock().unwrap();
+    let mut guard = store.inner.lock().unwrap();
 
-    match map.entry(key).or_insert_with(|| RedisValue::List(Vec::new())) {
+    let len = match guard.map.entry(key).or_insert_with(|| RedisValue::List(Vec::new())) {
         RedisValue::List(list) => {
             for element in &args[2..] {
                 list.push(as_str(element));
             }
-            Resp::Integer(list.len() as i64)
+            list.len() as i64
         }
-        _ => wrong_type(),
-    }
+        _ => return wrong_type(),
+    };
+
+    // `list` borrow ends here; safe to signal blocked BLPOP waiters.
+    store.on_push.notify_all();
+
+    Resp::Integer(len)
 }
 
 fn cmd_lpush(args: &[Vec<u8>], store: &Store) -> Resp {
@@ -95,17 +101,21 @@ fn cmd_lpush(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 
     let key = as_str(&args[1]);
-    let mut map = store.lock().unwrap();
+    let mut guard = store.inner.lock().unwrap();
 
-    match map.entry(key).or_insert_with(|| RedisValue::List(Vec::new())) {
+    let len = match guard.map.entry(key).or_insert_with(|| RedisValue::List(Vec::new())) {
         RedisValue::List(list) => {
             for element in &args[2..] {
                 list.insert(0, as_str(element)); // prepend -> reverses input order
             }
-            Resp::Integer(list.len() as i64)
+            list.len() as i64
         }
-        _ => wrong_type(),
-    }
+        _ => return wrong_type(),
+    };
+
+    store.on_push.notify_all();
+
+    Resp::Integer(len)
 }
 
 fn cmd_lrange(args: &[Vec<u8>], store: &Store) -> Resp {
@@ -124,8 +134,8 @@ fn cmd_lrange(args: &[Vec<u8>], store: &Store) -> Resp {
         Err(_) => return Resp::Error("ERR value is not an integer or out of range".into())
     };
 
-    let map = store.lock().unwrap();
-    match map.get(&key) {
+    let guard = store.inner.lock().unwrap();
+    match guard.map.get(&key) {
         Some(RedisValue::List(list)) => {
             let len = list.len() as i64;
             let start = normalize(start, len);
@@ -151,9 +161,9 @@ fn cmd_llen(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 
     let key = as_str(&args[1]);
-    let map = store.lock().unwrap();
+    let guard = store.inner.lock().unwrap();
 
-    match map.get(&key) {
+    match guard.map.get(&key) {
         Some(RedisValue::List(list)) => Resp::Integer(list.len() as i64),
         _ => Resp::Integer(0),
     }
@@ -175,9 +185,9 @@ fn cmd_lpop(args: &[Vec<u8>], store: &Store) -> Resp {
         None => None
     };
 
-    let mut map = store.lock().unwrap();
+    let mut guard = store.inner.lock().unwrap();
 
-    let result = match map.get_mut(&key) {
+    let result = match guard.map.get_mut(&key) {
         Some(RedisValue::List(list)) => {
             if list.is_empty() {
                 return match count {
@@ -211,11 +221,67 @@ fn cmd_lpop(args: &[Vec<u8>], store: &Store) -> Resp {
     };
 
     // borrow of `list` is over here, so we can touch `map` again
-    if matches!(map.get(&key), Some(RedisValue::List(l)) if l.is_empty()) {
-        map.remove(&key);
+    if matches!(guard.map.get(&key), Some(RedisValue::List(l)) if l.is_empty()) {
+        guard.map.remove(&key);
     }
 
     result
+}
+
+fn cmd_blpop(args: &[Vec<u8>], store: &Store) -> Resp {
+    if args.len() < 3 {
+        return wrong_args("blpop");
+    }
+
+    let key = as_str(&args[1]);
+    // Timeout is always "0" (block forever) in this stage; parse to validate.
+    let _timeout: f64 = match as_str(&args[2]).parse() {
+        Ok(t) => t,
+        Err(_) => return Resp::Error("ERR timeout is not a float or out of range, must be positive".into()),
+    };
+
+    let mut guard = store.inner.lock().unwrap();
+
+    // Take a FIFO ticket so the longest-waiting client is served first.
+    let ticket = guard.next_ticket;
+    guard.next_ticket += 1;
+    guard.waiters.entry(key.clone()).or_default().push_back(ticket);
+
+    loop {
+        let inner = &mut *guard; // reborrow so map & waiters are disjoint fields
+
+        let is_front = inner.waiters.get(&key)
+            .and_then(|q| q.front())
+            .map_or(false, |&t| t == ticket);
+
+        if is_front {
+            if let Some(RedisValue::List(list)) = inner.map.get_mut(&key) {
+                if !list.is_empty() {
+                    let elem = list.remove(0);
+
+                    if list.is_empty() {
+                        inner.map.remove(&key);
+                    }
+                    if let Some(q) = inner.waiters.get_mut(&key) {
+                        q.pop_front();
+                        if q.is_empty() {
+                            inner.waiters.remove(&key);
+                        }
+                    }
+
+                    // Let the next waiter re-check (more elements may remain).
+                    store.on_push.notify_all();
+                    return Resp::Array(vec![
+                        Resp::Bulk(Some(key.into_bytes())),
+                        Resp::Bulk(Some(elem.into_bytes())),
+                    ]);
+                }
+            }
+        }
+
+        // Not my turn / no data yet -> release lock and sleep until a push.
+        guard = store.on_push.wait(guard).unwrap();
+    }
 }
 
 /// Clamp a possibly-negative index into `[0, len]`.
