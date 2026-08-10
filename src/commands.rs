@@ -24,6 +24,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "LLEN" => cmd_llen(args, store),
         "LPOP" => cmd_lpop(args, store),
         "BLPOP" => cmd_blpop(args, store),
+        "TYPE" => cmd_type(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -313,6 +314,27 @@ fn cmd_blpop(args: &[Vec<u8>], store: &Store) -> Resp {
             }
         }
     }
+}
+
+fn cmd_type(args: &[Vec<u8>], store: &Store) -> Resp {
+    if args.len() < 2 {
+        return wrong_args("type");
+    }
+
+    let key = as_str(&args[1]);
+    let mut guard = store.inner.lock().unwrap();
+
+    let type_name = match guard.map.get(&key) {
+        Some(RedisValue::Str(_, Some(deadline))) if Instant::now() >= *deadline => {
+            guard.map.remove(&key);
+            "none"
+        }
+        Some(RedisValue::Str(_, _)) => "string",
+        Some(RedisValue::List(_)) => "list",
+        None => "none",
+    };
+
+    Resp::Simple(type_name.into())
 }
 
 /// Clamp a possibly-negative index into `[0, len]`.
