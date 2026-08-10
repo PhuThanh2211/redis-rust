@@ -235,9 +235,15 @@ fn cmd_blpop(args: &[Vec<u8>], store: &Store) -> Resp {
 
     let key = as_str(&args[1]);
     // Timeout is always "0" (block forever) in this stage; parse to validate.
-    let _timeout: f64 = match as_str(&args[2]).parse() {
-        Ok(t) => t,
-        Err(_) => return Resp::Error("ERR timeout is not a float or out of range, must be positive".into()),
+    let timeout_secs: f64 = match as_str(&args[2]).parse() {
+        Ok(t) if t >= 0.0 => t,
+        _ => return Resp::Error("ERR timeout is not a float or out of range, must be positive".into()),
+    };
+
+    let deadline: Option<Instant> = if timeout_secs == 0.0 {
+        None
+    } else {
+        Some(Instant::now() + Duration::from_secs_f64(timeout_secs))
     };
 
     let mut guard = store.inner.lock().unwrap();
@@ -280,7 +286,32 @@ fn cmd_blpop(args: &[Vec<u8>], store: &Store) -> Resp {
         }
 
         // Not my turn / no data yet -> release lock and sleep until a push.
-        guard = store.on_push.wait(guard).unwrap();
+        match deadline {
+            None => {
+                // block forever (timeout 0)
+                guard = store.on_push.wait(guard).unwrap();
+            }
+            Some(dl) => {
+                let now = Instant::now();
+                if now >= dl {
+                    // timed out: clean up my ticket, return null array
+                    guard.remove_ticket(&key, ticket);
+                    store.on_push.notify_all();
+                    return Resp::NullArray;
+                }
+
+                let remaining = dl - now;
+                let (g, wait_result) = store.on_push.wait_timeout(guard, remaining).unwrap();
+                guard = g;
+                if wait_result.timed_out() {
+                    if Instant::now() >= dl {
+                        guard.remove_ticket(&key, ticket);
+                        store.on_push.notify_all();
+                        return Resp::NullArray;
+                    }
+                }
+            }
+        }
     }
 }
 

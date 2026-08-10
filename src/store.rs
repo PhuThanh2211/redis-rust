@@ -13,6 +13,18 @@ pub struct Inner {
     pub next_ticket: u64,
 }
 
+impl Inner {
+    /// Remove a specific ticket from a key's waiter queue (used on timeout).
+    pub fn remove_ticket(&mut self, key: &str, ticket: u64) {
+        if let Some(q) = self.waiters.get_mut(key) {
+            q.retain(|&t| t != ticket); // remove my ticket wherever it is
+            if q.is_empty() {
+                self.waiters.remove(key);
+            }
+        }
+    }
+}
+
 pub struct Db {
     pub inner: Mutex<Inner>,
     pub on_push: Condvar,

@@ -7,6 +7,7 @@ pub enum Resp {
     Integer(i64),
     Bulk(Option<Vec<u8>>), // None = null bulk string ($-1)
     Array(Vec<Resp>),
+    NullArray, // *-1\r\n
 }
 
 impl Resp {
@@ -28,7 +29,8 @@ impl Resp {
                     out.extend(i.encode());
                 }
                 out
-            }
+            },
+            Resp::NullArray => b"*-1\r\n".to_vec(),
         }
     }
 }
