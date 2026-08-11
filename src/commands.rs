@@ -348,6 +348,15 @@ fn cmd_xadd(args: &[Vec<u8>], store: &Store) -> Resp {
     let key = as_str(&args[1]);
     let id = as_str(&args[2]);
 
+    let (ms, seq) = match parse_entry_id(&id) {
+        Some(parsed) => parsed,
+        None => return Resp::Error("ERR Invalid stream ID specified as stream command argument".into()),
+    };
+
+    if ms == 0 && seq == 0 {
+        return Resp::Error("ERR The ID specified in XADD must be greater than 0-0".into());
+    }
+
     let mut fields: Vec<(String, String)> = Vec::new();
     let mut i = 3;
 
@@ -360,6 +369,17 @@ fn cmd_xadd(args: &[Vec<u8>], store: &Store) -> Resp {
 
     match guard.map.entry(key).or_insert_with(|| RedisValue::Stream(Vec::new())) {
         RedisValue::Stream(entries) => {
+            if let Some(last) = entries.last() {
+                match parse_entry_id(&last.id) {
+                    Some((last_ms, last_seq)) => {
+                        if (ms, seq) <= (last_ms, last_seq) {
+                            return Resp::Error("ERR The ID specified in XADD is equal or smaller than the target stream top item".into());
+                        }
+                    }
+                    None => {} // stored IDs are always valid; ignore
+                }
+            }
+
             entries.push(StreamEntry {id: id.clone(), fields});
             Resp::Bulk(Some(id.into_bytes()))
         }
@@ -374,6 +394,12 @@ fn normalize(idx: i64, len: i64) -> i64 {
     } else {
         idx
     }
+}
+
+/// Parse an explicit stream ID "millis-seq" into (millis, seq).
+fn parse_entry_id(id: &str) -> Option<(u64, u64)> {
+    let (ms, seq) = id.split_once('-')?;
+    Some((ms.parse().ok()?, seq.parse().ok()?))
 }
 
 fn wrong_args(cmd: &str) -> Resp {
