@@ -2,7 +2,7 @@ use std::collections::hash_map::Entry;
 use std::time::{Duration, Instant};
 
 use crate::resp::Resp;
-use crate::store::{RedisValue, Store};
+use crate::store::{RedisValue, Store, StreamEntry};
 
 pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
     if args.is_empty() {
@@ -25,6 +25,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "LPOP" => cmd_lpop(args, store),
         "BLPOP" => cmd_blpop(args, store),
         "TYPE" => cmd_type(args, store),
+        "XADD" => cmd_xadd(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -67,7 +68,7 @@ fn cmd_get(args: &[Vec<u8>], store: &Store) -> Resp {
             Resp::Bulk(None)
         }
         Some(RedisValue::Str(value, _)) => Resp::Bulk(Some(value.clone().into_bytes())),
-        Some(RedisValue::List(_)) => wrong_type(),
+        Some(RedisValue::List(_)) | Some(RedisValue::Stream(_)) => wrong_type(),
         None => Resp::Bulk(None),
     }
 }
@@ -151,7 +152,7 @@ fn cmd_lrange(args: &[Vec<u8>], store: &Store) -> Resp {
                 slice.iter().map(|s| Resp::Bulk(Some(s.clone().into_bytes()))).collect(),
             )
         },
-        Some(RedisValue::Str(_, _)) => wrong_type(),
+        Some(RedisValue::Str(_, _)) | Some(RedisValue::Stream(_)) => wrong_type(),
         None => Resp::Array(vec![]),
     }
 }
@@ -212,7 +213,7 @@ fn cmd_lpop(args: &[Vec<u8>], store: &Store) -> Resp {
                 }
             }
         }
-        Some(RedisValue::Str(_, _)) => return wrong_type(),
+        Some(RedisValue::Str(_, _)) | Some(RedisValue::Stream(_)) => return wrong_type(),
         None => {
             return match count {
                 Some(_) => Resp::Array(vec![]),
@@ -331,10 +332,39 @@ fn cmd_type(args: &[Vec<u8>], store: &Store) -> Resp {
         }
         Some(RedisValue::Str(_, _)) => "string",
         Some(RedisValue::List(_)) => "list",
+        Some(RedisValue::Stream(_)) => "stream",
         None => "none",
     };
 
     Resp::Simple(type_name.into())
+}
+
+fn cmd_xadd(args: &[Vec<u8>], store: &Store) -> Resp {
+    // Ex: redis-cli XADD stream_key 1526919030474-0 temperature 36 humidity 95
+    if args.len() < 5 || args.len() % 2 != 1 {
+        return wrong_args("xadd");
+    }
+
+    let key = as_str(&args[1]);
+    let id = as_str(&args[2]);
+
+    let mut fields: Vec<(String, String)> = Vec::new();
+    let mut i = 3;
+
+    while i + 1 < args.len() {
+        fields.push((as_str(&args[i]), as_str(&args[i + 1])));
+        i += 2;
+    }
+
+    let mut guard = store.inner.lock().unwrap();
+
+    match guard.map.entry(key).or_insert_with(|| RedisValue::Stream(Vec::new())) {
+        RedisValue::Stream(entries) => {
+            entries.push(StreamEntry {id: id.clone(), fields});
+            Resp::Bulk(Some(id.into_bytes()))
+        }
+        _ => wrong_type(),
+    }
 }
 
 /// Clamp a possibly-negative index into `[0, len]`.

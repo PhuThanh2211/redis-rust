@@ -2,9 +2,15 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
+pub struct StreamEntry {
+    pub id: String,                     // e.g. "1526919030474-0"
+    pub fields: Vec<(String, String)>,
+}
+
 pub enum RedisValue {
     Str(String, Option<Instant>),
     List(Vec<String>),
+    Stream(Vec<StreamEntry>),
 }
 
 pub struct Inner {
