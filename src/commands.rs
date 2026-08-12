@@ -1,12 +1,13 @@
 use std::collections::hash_map::Entry;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::resp::Resp;
 use crate::store::{RedisValue, Store, StreamEntry};
 
 enum IdSpec {
     Explicit(u64, u64), // ms-seq
-    AutoSeq(u64), // ms-*
+    AutoSeq(u64),       // ms-*
+    AutoAll,            // *
 }
 
 pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
@@ -373,6 +374,10 @@ fn cmd_xadd(args: &[Vec<u8>], store: &Store) -> Resp {
             let (ms, seq) = match spec {
                 IdSpec::Explicit(ms, seq) => (ms, seq),
                 IdSpec::AutoSeq(ms) => (ms, resolve_seq(ms, entries)),
+                IdSpec::AutoAll => {
+                    let ms = now_ms();
+                    (ms, resolve_seq(ms, entries))
+                }
             };
 
             if ms == 0 && seq == 0 {
@@ -406,6 +411,10 @@ fn normalize(idx: i64, len: i64) -> i64 {
 
 /// Parse an explicit stream ID "millis-seq" into (millis, seq).
 fn parse_entry_spec(id: &str) -> Option<IdSpec> {
+    if id == "*" {
+        return Some(IdSpec::AutoAll);
+    }
+
     let (ms, seq) = id.split_once('-')?;
     let ms: u64 = ms.parse().ok()?;
     if seq == "*" {
@@ -426,6 +435,10 @@ fn resolve_seq(ms: u64, entries: &[StreamEntry]) -> u64 {
         _ if ms == 0 => 1,
         _ => 0
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
 }
 
 fn wrong_args(cmd: &str) -> Resp {
