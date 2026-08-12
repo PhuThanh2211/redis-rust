@@ -4,6 +4,11 @@ use std::time::{Duration, Instant};
 use crate::resp::Resp;
 use crate::store::{RedisValue, Store, StreamEntry};
 
+enum IdSpec {
+    Explicit(u64, u64), // ms-seq
+    AutoSeq(u64), // ms-*
+}
+
 pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
     if args.is_empty() {
         return Resp::Error("ERR empty command".into());
@@ -346,16 +351,12 @@ fn cmd_xadd(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 
     let key = as_str(&args[1]);
-    let id = as_str(&args[2]);
+    let id_args = as_str(&args[2]);
 
-    let (ms, seq) = match parse_entry_id(&id) {
-        Some(parsed) => parsed,
+    let spec = match parse_entry_spec(&id_args) {
+        Some(s) => s,
         None => return Resp::Error("ERR Invalid stream ID specified as stream command argument".into()),
     };
-
-    if ms == 0 && seq == 0 {
-        return Resp::Error("ERR The ID specified in XADD must be greater than 0-0".into());
-    }
 
     let mut fields: Vec<(String, String)> = Vec::new();
     let mut i = 3;
@@ -369,17 +370,24 @@ fn cmd_xadd(args: &[Vec<u8>], store: &Store) -> Resp {
 
     match guard.map.entry(key).or_insert_with(|| RedisValue::Stream(Vec::new())) {
         RedisValue::Stream(entries) => {
+            let (ms, seq) = match spec {
+                IdSpec::Explicit(ms, seq) => (ms, seq),
+                IdSpec::AutoSeq(ms) => (ms, resolve_seq(ms, entries)),
+            };
+
+            if ms == 0 && seq == 0 {
+                return Resp::Error("ERR The ID specified in XADD must be greater than 0-0".into());
+            }
+
             if let Some(last) = entries.last() {
-                match parse_entry_id(&last.id) {
-                    Some((last_ms, last_seq)) => {
-                        if (ms, seq) <= (last_ms, last_seq) {
-                            return Resp::Error("ERR The ID specified in XADD is equal or smaller than the target stream top item".into());
-                        }
+                if let Some((last_ms, last_seq)) = parse_entry_id(&last.id) {
+                    if (ms, seq) <= (last_ms, last_seq) {
+                        return Resp::Error("ERR The ID specified in XADD is equal or smaller than the target stream top item".into());
                     }
-                    None => {} // stored IDs are always valid; ignore
                 }
             }
 
+            let id = format!("{ms}-{seq}");
             entries.push(StreamEntry {id: id.clone(), fields});
             Resp::Bulk(Some(id.into_bytes()))
         }
@@ -397,9 +405,27 @@ fn normalize(idx: i64, len: i64) -> i64 {
 }
 
 /// Parse an explicit stream ID "millis-seq" into (millis, seq).
+fn parse_entry_spec(id: &str) -> Option<IdSpec> {
+    let (ms, seq) = id.split_once('-')?;
+    let ms: u64 = ms.parse().ok()?;
+    if seq == "*" {
+       Some(IdSpec::AutoSeq(ms))
+    } else {
+        Some(IdSpec::Explicit(ms, seq.parse().ok()?))
+    }
+}
+
 fn parse_entry_id(id: &str) -> Option<(u64, u64)> {
     let (ms, seq) = id.split_once('-')?;
     Some((ms.parse().ok()?, seq.parse().ok()?))
+}
+
+fn resolve_seq(ms: u64, entries: &[StreamEntry]) -> u64 {
+    match entries.last().and_then(|e| parse_entry_id(&e.id)) {
+        Some((last_ms, last_seq)) if last_ms == ms => last_seq + 1,
+        _ if ms == 0 => 1,
+        _ => 0
+    }
 }
 
 fn wrong_args(cmd: &str) -> Resp {
