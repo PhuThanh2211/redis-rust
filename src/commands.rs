@@ -32,6 +32,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "BLPOP" => cmd_blpop(args, store),
         "TYPE" => cmd_type(args, store),
         "XADD" => cmd_xadd(args, store),
+        "XRANGE" => cmd_xrange(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -400,6 +401,54 @@ fn cmd_xadd(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 }
 
+fn cmd_xrange(args: &[Vec<u8>], store: &Store) -> Resp {
+    // Ex: redis-cli XRANGE some_key 1526985054069 1526985054079
+    if args.len() < 4 {
+        return wrong_args("xrange");
+    }
+
+    let key = as_str(&args[1]);
+    let start = match parse_entry_id_range(&as_str(&args[2]), true) {
+        Some(s) => s,
+        None => return Resp::Error("ERR Invalid stream ID specified as stream command argument".into()),
+    };
+
+    let end = match parse_entry_id_range(&as_str(&args[3]), false) {
+        Some(s) => s,
+        None => return Resp::Error("ERR Invalid stream ID specified as stream command argument".into()),
+    };
+
+    let guard = store.inner.lock().unwrap();
+    let entries = match guard.map.get(&key) {
+        Some(RedisValue::Stream(entries)) => entries,
+        Some(_) => return wrong_type(),
+        None => return Resp::Array(vec![]), // no stream => empty array
+    };
+
+    let mut result: Vec<Resp> = Vec::new();
+    for entry in entries {
+        let id = match parse_entry_id(&entry.id) {
+            Some(id) => id,
+            None => continue,
+        };
+        if id >= start && id <= end {
+            // Build the field/value bulk-string array (flattened, in order).
+            let mut fv: Vec<Resp> = Vec::new();
+            for (f, v) in &entry.fields {
+                fv.push(Resp::Bulk(Some(f.clone().into_bytes())));
+                fv.push(Resp::Bulk(Some(v.clone().into_bytes())));
+            }
+
+            result.push(Resp::Array((vec![
+                Resp::Bulk(Some(entry.id.clone().into_bytes())),
+                Resp::Array(fv),
+            ])));
+        }
+    }
+
+    Resp::Array(result)
+}
+
 /// Clamp a possibly-negative index into `[0, len]`.
 fn normalize(idx: i64, len: i64) -> i64 {
     if idx < 0 {
@@ -425,8 +474,21 @@ fn parse_entry_spec(id: &str) -> Option<IdSpec> {
 }
 
 fn parse_entry_id(id: &str) -> Option<(u64, u64)> {
-    let (ms, seq) = id.split_once('-')?;
-    Some((ms.parse().ok()?, seq.parse().ok()?))
+    match id.split_once('-') {
+        Some((ms, seq)) => Some((ms.parse().ok()?, seq.parse().ok()?)),
+        None => None
+    }
+}
+
+fn parse_entry_id_range(id: &str, is_start: bool) -> Option<(u64, u64)> {
+    match id.split_once('-') {
+        Some((ms, seq)) => Some((ms.parse().ok()?, seq.parse().ok()?)),
+        None => {
+            let ms: u64 = id.parse().ok()?;
+            // start: seq default to 0; end: seq defaults to max.
+            Some((ms, if is_start { 0 } else { u64::MAX }))
+        }
+    }
 }
 
 fn resolve_seq(ms: u64, entries: &[StreamEntry]) -> u64 {
