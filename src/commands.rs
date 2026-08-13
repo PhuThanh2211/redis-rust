@@ -439,10 +439,10 @@ fn cmd_xrange(args: &[Vec<u8>], store: &Store) -> Resp {
                 fv.push(Resp::Bulk(Some(v.clone().into_bytes())));
             }
 
-            result.push(Resp::Array((vec![
+            result.push(Resp::Array(vec![
                 Resp::Bulk(Some(entry.id.clone().into_bytes())),
                 Resp::Array(fv),
-            ])));
+            ]));
         }
     }
 
