@@ -481,6 +481,10 @@ fn parse_entry_id(id: &str) -> Option<(u64, u64)> {
 }
 
 fn parse_entry_id_range(id: &str, is_start: bool) -> Option<(u64, u64)> {
+    if id == "-" {
+        return Some((0, 1));
+    }
+
     match id.split_once('-') {
         Some((ms, seq)) => Some((ms.parse().ok()?, seq.parse().ok()?)),
         None => {
