@@ -441,7 +441,7 @@ fn cmd_xrange(args: &[Vec<u8>], store: &Store) -> Resp {
 }
 
 fn cmd_xread(args: &[Vec<u8>], store: &Store) -> Resp {
-    // Ex: redis-cli XREAD STREAMS stream_key 0-0
+    // Ex: redis-cli XREAD STREAMS key1 key2 ... id1 id2 ...
     if args.len() < 4 {
         return wrong_args("xread");
     }
@@ -450,41 +450,58 @@ fn cmd_xread(args: &[Vec<u8>], store: &Store) -> Resp {
         return Resp::Error("ERR syntax error".into());
     }
 
-    let key = as_str(&args[2]);
-    let after = match parse_entry_id(&as_str(&args[3])) {
-        Some(id) => id,
-        None => return Resp::Error("ERR Invalid stream ID specified as stream command argument".into()),
-    };
+    // Tokens after STREAMS: N keys then N ids -> must be even, split in half.
+    let rest = &args[2..];
+    if rest.is_empty() || rest.len() % 2 != 0 {
+        return Resp::Error(
+            "ERR unbalanced XREAD list of streams: for each stream key an Id or '$' must be specified".into(),
+        );
+    }
+
+    let n = rest.len() / 2;
+    let keys = &rest[..n];
+    let ids = &rest[n..];
 
     let guard = store.inner.lock().unwrap();
 
-    let entries = match guard.map.get(&key) {
-        Some(RedisValue::Stream(entries)) => entries,
-        Some(_) => return wrong_type(),
-        None => return Resp::NullArray,
-    };
+    let mut streams_out: Vec<Resp> = Vec::new();
+    for i in 0..n {
+        let key = as_str(&keys[i]);
+        let after = match parse_entry_id(&as_str(&ids[i])) {
+            Some(id) => id,
+            None => return Resp::Error(
+                "ERR Invalid stream ID specified as stream command argument".into()
+            ),
+        };
 
-    // Exclusive: strictly greater than `after`.
-    let mut matched: Vec<Resp> = Vec::new();
-    for entry in entries {
-        if let Some(id) = parse_entry_id(&entry.id) {
-            if id > after {
-                matched.push(entry_to_resp(entry));
+        let entries = match guard.map.get(&key) {
+            Some(RedisValue::Stream(entries)) => entries,
+            Some(_) => return wrong_type(),
+            None => continue, // no such stream -> contributes nothing
+        };
+
+        let mut matched: Vec<Resp> = Vec::new();
+        for entry in entries {
+            if let Some(id) = parse_entry_id(&entry.id) {
+                if id > after {
+                    matched.push(entry_to_resp(entry))
+                }
             }
+        }
+
+        if !matched.is_empty() {
+            streams_out.push(Resp::Array(vec![
+                Resp::Bulk(Some(key.into_bytes())),
+                Resp::Array(matched)
+            ]));
         }
     }
 
-    if matched.is_empty() {
+    if streams_out.is_empty() {
         return Resp::NullArray;
     }
 
-    // [ [ key, [entries...] ] ]    
-    Resp::Array(vec![
-        Resp::Array(vec![
-            Resp::Bulk(Some(key.into_bytes())),
-            Resp::Array(matched),
-        ])
-    ])
+    Resp::Array(streams_out)
 }
 
 /// Clamp a possibly-negative index into `[0, len]`.
