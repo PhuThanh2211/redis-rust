@@ -33,6 +33,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "TYPE" => cmd_type(args, store),
         "XADD" => cmd_xadd(args, store),
         "XRANGE" => cmd_xrange(args, store),
+        "XREAD" => cmd_xread(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -432,21 +433,58 @@ fn cmd_xrange(args: &[Vec<u8>], store: &Store) -> Resp {
             None => continue,
         };
         if id >= start && id <= end {
-            // Build the field/value bulk-string array (flattened, in order).
-            let mut fv: Vec<Resp> = Vec::new();
-            for (f, v) in &entry.fields {
-                fv.push(Resp::Bulk(Some(f.clone().into_bytes())));
-                fv.push(Resp::Bulk(Some(v.clone().into_bytes())));
-            }
-
-            result.push(Resp::Array(vec![
-                Resp::Bulk(Some(entry.id.clone().into_bytes())),
-                Resp::Array(fv),
-            ]));
+            result.push(entry_to_resp(entry));
         }
     }
 
     Resp::Array(result)
+}
+
+fn cmd_xread(args: &[Vec<u8>], store: &Store) -> Resp {
+    // Ex: redis-cli XREAD STREAMS stream_key 0-0
+    if args.len() < 4 {
+        return wrong_args("xread");
+    }
+
+    if !as_str(&args[1]).eq_ignore_ascii_case("streams") {
+        return Resp::Error("ERR syntax error".into());
+    }
+
+    let key = as_str(&args[2]);
+    let after = match parse_entry_id(&as_str(&args[3])) {
+        Some(id) => id,
+        None => return Resp::Error("ERR Invalid stream ID specified as stream command argument".into()),
+    };
+
+    let guard = store.inner.lock().unwrap();
+
+    let entries = match guard.map.get(&key) {
+        Some(RedisValue::Stream(entries)) => entries,
+        Some(_) => return wrong_type(),
+        None => return Resp::NullArray,
+    };
+
+    // Exclusive: strictly greater than `after`.
+    let mut matched: Vec<Resp> = Vec::new();
+    for entry in entries {
+        if let Some(id) = parse_entry_id(&entry.id) {
+            if id > after {
+                matched.push(entry_to_resp(entry));
+            }
+        }
+    }
+
+    if matched.is_empty() {
+        return Resp::NullArray;
+    }
+
+    // [ [ key, [entries...] ] ]    
+    Resp::Array(vec![
+        Resp::Array(vec![
+            Resp::Bulk(Some(key.into_bytes())),
+            Resp::Array(matched),
+        ])
+    ])
 }
 
 /// Clamp a possibly-negative index into `[0, len]`.
@@ -456,6 +494,19 @@ fn normalize(idx: i64, len: i64) -> i64 {
     } else {
         idx
     }
+}
+
+fn entry_to_resp(entry: &StreamEntry) -> Resp {
+    let mut fv: Vec<Resp> = Vec::new();
+    for (f, v) in &entry.fields {
+        fv.push(Resp::Bulk(Some(f.clone().into_bytes())));
+        fv.push(Resp::Bulk(Some(v.clone().into_bytes())));
+    }
+
+    Resp::Array(vec![
+        Resp::Bulk(Some(entry.id.clone().into_bytes())),
+        Resp::Array(fv),
+    ])
 }
 
 /// Parse an explicit stream ID "millis-seq" into (millis, seq).
