@@ -475,19 +475,31 @@ fn cmd_xread(args: &[Vec<u8>], store: &Store) -> Resp {
 
     let n = rest.len() / 2;
     let keys: Vec<String> = rest[..n].iter().map(|k| as_str(k)).collect();
-    let afters: Vec<(u64, u64)> = {
-        let mut v = Vec::with_capacity(n);
-        for raw in &rest[n..] {
-            match parse_entry_id(&as_str(raw)) {
-                Some(id) => v.push(id),
-                None => return Resp::Error("ERR Invalid stream ID...".into()),
-            }
-        }
-
-        v
-    };
+    let id_args: Vec<String> = rest[n..].iter().map(|i| as_str(i)).collect();
 
     let mut guard = store.inner.lock().unwrap();
+
+    let mut afters: Vec<(u64, u64)> = Vec::with_capacity(n);
+    for (key, id_arg) in keys.iter().zip(&id_args) {
+        let after = if id_arg == "$" {
+            // current top of the stream, or (0,0) if empty/missing
+            match guard.map.get(key) {
+                Some(RedisValue::Stream(entries)) => entries
+                    .last().and_then(|e| parse_entry_id(&e.id))
+                    .unwrap_or((0, 0)),
+                _ => (0, 0),
+            }
+        } else {
+            match parse_entry_id(id_arg) {
+                Some(id) => id,
+                None => return Resp::Error(
+                    "ERR Invalid stream ID specified as stream command argument".into(),
+                )
+            }
+        };
+
+        afters.push(after);
+    }
 
     // Try immediately first.
     let found = collect_streams(&guard, &keys, &afters);
