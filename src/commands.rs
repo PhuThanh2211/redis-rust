@@ -562,7 +562,11 @@ fn cmd_incr(args: &[Vec<u8>], store: &Store) -> Resp {
 
     match guard.map.get_mut(&key) {
         Some(RedisValue::Str(value, expired)) => {
-            let n: i64 = value.parse().unwrap();
+            let n: i64 = match value.parse() {
+                Ok(n) => n,
+                Err(_) => return Resp::Error("ERR value is not an integer or out of range".into())
+            };
+            
             let new = n + 1;
             *value = new.to_string();
             Resp::Integer(new)
