@@ -396,6 +396,7 @@ fn cmd_xadd(args: &[Vec<u8>], store: &Store) -> Resp {
 
             let id = format!("{ms}-{seq}");
             entries.push(StreamEntry {id: id.clone(), fields});
+            store.on_push.notify_all();
             Resp::Bulk(Some(id.into_bytes()))
         }
         _ => wrong_type(),
@@ -441,17 +442,31 @@ fn cmd_xrange(args: &[Vec<u8>], store: &Store) -> Resp {
 }
 
 fn cmd_xread(args: &[Vec<u8>], store: &Store) -> Resp {
-    // Ex: redis-cli XREAD STREAMS key1 key2 ... id1 id2 ...
+    // Ex1: redis-cli XREAD STREAMS key1 key2 ... id1 id2 ...
+    // Ex2: redis-cli XREAD BLOCK<ms> STREAMS key1 key2 ... id1 id2 ...
     if args.len() < 4 {
         return wrong_args("xread");
     }
 
-    if !as_str(&args[1]).eq_ignore_ascii_case("streams") {
+    // Optional BLOCK <ms> prefix
+    let mut idx = 1;
+    let mut block: Option<u64> = None;
+
+    if as_str(&args[idx]).eq_ignore_ascii_case("block") {
+        let ms: u64 = match as_str(&args[idx + 1]).parse() {
+            Ok(v) => v,
+            Err(_) => return Resp::Error("ERR timeout is not an integer or out of range".into()),
+        };
+        block = Some(ms);
+        idx += 2;
+    }
+
+    if !as_str(&args[idx]).eq_ignore_ascii_case("streams") {
         return Resp::Error("ERR syntax error".into());
     }
 
     // Tokens after STREAMS: N keys then N ids -> must be even, split in half.
-    let rest = &args[2..];
+    let rest = &args[idx + 1..];
     if rest.is_empty() || rest.len() % 2 != 0 {
         return Resp::Error(
             "ERR unbalanced XREAD list of streams: for each stream key an Id or '$' must be specified".into(),
@@ -459,49 +474,93 @@ fn cmd_xread(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 
     let n = rest.len() / 2;
-    let keys = &rest[..n];
-    let ids = &rest[n..];
-
-    let guard = store.inner.lock().unwrap();
-
-    let mut streams_out: Vec<Resp> = Vec::new();
-    for i in 0..n {
-        let key = as_str(&keys[i]);
-        let after = match parse_entry_id(&as_str(&ids[i])) {
-            Some(id) => id,
-            None => return Resp::Error(
-                "ERR Invalid stream ID specified as stream command argument".into()
-            ),
-        };
-
-        let entries = match guard.map.get(&key) {
-            Some(RedisValue::Stream(entries)) => entries,
-            Some(_) => return wrong_type(),
-            None => continue, // no such stream -> contributes nothing
-        };
-
-        let mut matched: Vec<Resp> = Vec::new();
-        for entry in entries {
-            if let Some(id) = parse_entry_id(&entry.id) {
-                if id > after {
-                    matched.push(entry_to_resp(entry))
-                }
+    let keys: Vec<String> = rest[..n].iter().map(|k| as_str(k)).collect();
+    let afters: Vec<(u64, u64)> = {
+        let mut v = Vec::with_capacity(n);
+        for raw in &rest[n..] {
+            match parse_entry_id(&as_str(raw)) {
+                Some(id) => v.push(id),
+                None => return Resp::Error("ERR Invalid stream ID...".into()),
             }
         }
 
-        if !matched.is_empty() {
-            streams_out.push(Resp::Array(vec![
-                Resp::Bulk(Some(key.into_bytes())),
-                Resp::Array(matched)
-            ]));
+        v
+    };
+
+    let mut guard = store.inner.lock().unwrap();
+
+    // Try immediately first.
+    let found = collect_streams(&guard, &keys, &afters);
+    if !found.is_empty() {
+        return Resp::Array(found);
+    }
+
+    let block_ms = match block {
+        Some(ms) => ms,
+        None => return Resp::NullArray,
+    };
+
+    let deadline: Option<Instant> = if block_ms == 0 {
+        None
+    } else {
+        Some(Instant::now() + Duration::from_millis(block_ms))
+    };
+
+    loop {
+        match deadline {
+            None => {
+                guard = store.on_push.wait(guard).unwrap();
+            },
+            Some(dl) => {
+                let now = Instant::now();
+                if now >= dl {
+                    return Resp::NullArray;
+                }
+
+                let (g, res) = store.on_push.wait_timeout(guard, dl - now).unwrap();
+                guard = g;
+
+                if res.timed_out() && Instant::now() >= dl {
+                    // One last check before giving up
+                    let found = collect_streams(&guard, &keys, &afters);
+                    return if found.is_empty() {
+                        Resp::NullArray
+                    } else {
+                        Resp::Array(found)
+                    };
+                }
+            }
+        }
+        let found = collect_streams(&guard, &keys, &afters);
+        if !found.is_empty() {
+            return Resp::Array(found);
         }
     }
+}
 
-    if streams_out.is_empty() {
-        return Resp::NullArray;
+fn collect_streams(guard: &std::sync::MutexGuard<'_, crate::store::Inner>,
+                   keys: &[String], afters: &[(u64, u64)]) -> Vec<Resp> {
+    let mut out = Vec::new();
+    for (key, &after) in keys.iter().zip(afters) {
+        if let Some(RedisValue::Stream(entries)) = guard.map.get(key) {
+            let mut matched = Vec::new();
+            for entry in entries {
+                if let Some(id) = parse_entry_id(&entry.id) {
+                    if id > after {
+                        matched.push(entry_to_resp(entry));
+                    }
+                }
+            }
+
+            if !matched.is_empty() {
+                out.push(Resp::Array(vec![
+                    Resp::Bulk(Some(key.clone().into_bytes())),
+                    Resp::Array(matched),
+                ]))
+            }
+        }
     }
-
-    Resp::Array(streams_out)
+    out
 }
 
 /// Clamp a possibly-negative index into `[0, len]`.
