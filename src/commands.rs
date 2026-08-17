@@ -34,6 +34,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "XADD" => cmd_xadd(args, store),
         "XRANGE" => cmd_xrange(args, store),
         "XREAD" => cmd_xread(args, store),
+        "INCR" => cmd_incr(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -546,6 +547,31 @@ fn cmd_xread(args: &[Vec<u8>], store: &Store) -> Resp {
         let found = collect_streams(&guard, &keys, &afters);
         if !found.is_empty() {
             return Resp::Array(found);
+        }
+    }
+}
+
+fn cmd_incr(args: &[Vec<u8>], store: &Store) -> Resp {
+    // Ex: redis-cli INCR foo
+    if args.len() < 2 {
+        return wrong_args("incr");
+    }
+
+    let key = as_str(&args[1]);
+    let mut guard = store.inner.lock().unwrap();
+
+    match guard.map.get_mut(&key) {
+        Some(RedisValue::Str(value, expired)) => {
+            let n: i64 = value.parse().unwrap();
+            let new = n + 1;
+            *value = new.to_string();
+            Resp::Integer(new)
+        },
+        Some(_) => wrong_type(),
+        None => {
+            // Key doesn't exist -> set to 1.
+            guard.map.insert(key, RedisValue::Str("1".to_string(), None));
+            Resp::Integer(1)
         }
     }
 }
