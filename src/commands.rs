@@ -35,8 +35,6 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "XRANGE" => cmd_xrange(args, store),
         "XREAD" => cmd_xread(args, store),
         "INCR" => cmd_incr(args, store),
-        "MULTI" => cmd_multi(args, store),
-        "EXEC" => Resp::Error("ERR EXEC without MULTI".into()),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -580,14 +578,6 @@ fn cmd_incr(args: &[Vec<u8>], store: &Store) -> Resp {
             Resp::Integer(1)
         }
     }
-}
-
-fn cmd_multi(args: &[Vec<u8>], store: &Store) -> Resp {
-    // Ex: redis-cli MULTI
-    if args.len() < 1 {
-        return wrong_args("multi");
-    }
-    Resp::Simple("OK".into())
 }
 
 fn collect_streams(guard: &std::sync::MutexGuard<'_, crate::store::Inner>,
