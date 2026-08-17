@@ -36,6 +36,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "XREAD" => cmd_xread(args, store),
         "INCR" => cmd_incr(args, store),
         "MULTI" => cmd_multi(args, store),
+        "EXEC" => Resp::Error("ERR EXEC without MULTI".into()),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
