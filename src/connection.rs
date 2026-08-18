@@ -57,6 +57,15 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
 
             Resp::Array(replies)
         }
+        "DISCARD" => {
+            if !state.in_multi {
+                return Resp::Error("ERR DISCARD without MULTI".into());
+            }
+
+            state.in_multi = false;
+            state.queue.clear();
+            Resp::Simple("OK".into())
+        }
         _ if state.in_multi => {
             // queue the raw command; don't execute or touch the DB
             state.queue.push(args.to_vec());
