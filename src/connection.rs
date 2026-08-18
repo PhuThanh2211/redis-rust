@@ -48,7 +48,14 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
             }
 
             state.in_multi = false;
-            Resp::Array(vec![])
+            let queued = std::mem::take(&mut state.queue);
+            let mut replies: Vec<Resp> = Vec::with_capacity(queued.len());
+
+            for cmd_args in &queued {
+                replies.push(dispatch(cmd_args, store));
+            }
+
+            Resp::Array(replies)
         }
         _ if state.in_multi => {
             // queue the raw command; don't execute or touch the DB
