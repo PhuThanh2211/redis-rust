@@ -48,6 +48,10 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
             Resp::Simple("OK".into())
         }
         "WATCH" => {
+            if state.in_multi {
+                return Resp::Error("ERR WATCH inside MULTI is not allowed".into());
+            }
+
             if args.len() < 2 {
                 return Resp::Error("ERR wrong number of arguments for 'watch' command".into());
             }
