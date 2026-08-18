@@ -8,6 +8,7 @@ use crate::store::Store;
 struct ConnState {
     in_multi: bool,
     queue: Vec<Vec<Vec<u8>>>,
+    watched: Vec<String>, // keys being watched
 }
 
 pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
@@ -15,7 +16,11 @@ pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
 
-    let mut state = ConnState { in_multi: false, queue: Vec::new() };
+    let mut state = ConnState {
+        in_multi: false,
+        queue: Vec::new(),
+        watched: Vec::new(),
+    };
 
     loop {
         match read_command(&mut reader)? {
@@ -40,6 +45,17 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
     match cmd.as_str() {
         "MULTI" => {
             state.in_multi = true;
+            Resp::Simple("OK".into())
+        }
+        "WATCH" => {
+            if args.len() < 2 {
+                return Resp::Error("ERR wrong number of arguments for 'watch' command".into());
+            }
+
+            for k in &args[1..] {
+                state.watched.push(String::from_utf8_lossy(k).into_owned());
+            }
+
             Resp::Simple("OK".into())
         }
         "EXEC" => {
