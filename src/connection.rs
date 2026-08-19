@@ -8,7 +8,7 @@ use crate::store::Store;
 struct ConnState {
     in_multi: bool,
     queue: Vec<Vec<Vec<u8>>>,
-    watched: Vec<String>, // keys being watched
+    watched: Vec<(String, u64)>, // keys being watched
 }
 
 pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
@@ -56,8 +56,12 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
                 return Resp::Error("ERR wrong number of arguments for 'watch' command".into());
             }
 
+            let guard = store.inner.lock().unwrap();
+
             for k in &args[1..] {
-                state.watched.push(String::from_utf8_lossy(k).into_owned());
+                let key = String::from_utf8_lossy(k).into_owned();
+                let ver = guard.version_of(&key);
+                state.watched.push((key, ver));
             }
 
             Resp::Simple("OK".into())
@@ -68,9 +72,21 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
             }
 
             state.in_multi = false;
-            let queued = std::mem::take(&mut state.queue);
-            let mut replies: Vec<Resp> = Vec::with_capacity(queued.len());
 
+            // Optimistic-locking check:
+            let dirty = {
+                let guard = store.inner.lock().unwrap();
+                state.watched.iter().any(|(k, v)| guard.version_of(k) != *v)
+            };
+
+            let queued = std::mem::take(&mut state.queue);
+            state.watched.clear(); // clear watch state regardless of outcome
+
+            if dirty {
+                return Resp::NullArray; // aborted -> *-1\r\n, queue discarded
+            }
+
+            let mut replies: Vec<Resp> = Vec::with_capacity(queued.len());
             for cmd_args in &queued {
                 replies.push(dispatch(cmd_args, store));
             }

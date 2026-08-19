@@ -58,7 +58,9 @@ fn cmd_set(args: &[Vec<u8>], store: &Store) -> Resp {
         }
     }
 
-    store.inner.lock().unwrap().map.insert(key, RedisValue::Str(value, expiry));
+    let mut guard = store.inner.lock().unwrap();
+    guard.map.insert(key.clone(), RedisValue::Str(value, expiry));
+    guard.touch(&key);
 
     Resp::Simple("OK".into())
 }

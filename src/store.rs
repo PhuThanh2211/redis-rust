@@ -17,9 +17,16 @@ pub struct Inner {
     pub map: HashMap<String, RedisValue>,
     pub waiters: HashMap<String, VecDeque<u64>>, // FIFO tickets per key
     pub next_ticket: u64,
+    pub versions: HashMap<String, u64>, // bumped whenever a key is modified
 }
 
 impl Inner {
+    pub fn touch (&mut self, key: &str) {
+        *self.versions.entry(key.to_string()).or_insert(0) += 1;
+    }
+    pub fn version_of(&self, key: &str) -> u64 {
+        self.versions.get(key).copied().unwrap_or(0)
+    }
     /// Remove a specific ticket from a key's waiter queue (used on timeout).
     pub fn remove_ticket(&mut self, key: &str, ticket: u64) {
         if let Some(q) = self.waiters.get_mut(key) {
@@ -43,7 +50,8 @@ pub fn new_store() -> Store {
         inner: Mutex::new(Inner {
             map: HashMap::new(),
             waiters: HashMap::new(),
-            next_ticket: 0
+            next_ticket: 0,
+            versions: HashMap::new(),
         }),
         on_push: Condvar::new()
     })
