@@ -4,6 +4,7 @@ mod resp;
 mod store;
 mod commands;
 mod connection;
+mod replication;
 
 use std::net::TcpListener;
 use std::thread;
@@ -15,9 +16,12 @@ fn main() {
     println!("Redis Server listening here with port {port}!!!");
     let addr = format!("127.0.0.1:{port}");
 
-    let listener = TcpListener::bind(&addr).unwrap();
     let store = new_store(replica_of);
 
+    // If we're a replica, connect to the master and start the handshake.
+    replication::start_handshake(store.clone(), port);
+
+    let listener = TcpListener::bind(&addr).unwrap();
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
