@@ -66,6 +66,17 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
 
             Resp::Simple("OK".into())
         }
+        "UNWATCH" => {
+            if args.len() > 1 {
+                return Resp::Error("ERR wrong number of arguments for 'unwatch' command".into());
+            }
+
+            if !state.watched.is_empty() {
+                state.watched.clear();
+            }
+
+            Resp::Simple("OK".into())
+        }
         "EXEC" => {
             if !state.in_multi {
                 return Resp::Error("ERR EXEC without MULTI".into());
