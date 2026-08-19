@@ -590,14 +590,16 @@ fn cmd_info(args: &[Vec<u8>], store: &Store) -> Resp {
     // as_deref in this case is used to convert Option<String> to Option<&str>
     match section.as_deref() {
         Some("replication") | None => {
-           let body = concat!(
-                "# Replication\r\n",
-               "role:master\r\n",
-               "connected_slaves:0\r\n",
-               "master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\n",
-               "master_repl_offset:0\r\n",
+            let role = if store.is_replica() {
+                "slave"
+            } else {
+                "master"
+            };
+
+           let body = format!(
+                "# Replication\r\nrole:{role}\r\nconnected_slaves:0\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\nmaster_repl_offset:0\r\n",
            );
-            Resp::Bulk(Some(body.as_bytes().to_vec()))
+            Resp::Bulk(Some(body.into_bytes()))
         }
         _ => Resp::Bulk(Some(Vec::new())), // unknow section
     }

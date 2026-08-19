@@ -41,11 +41,18 @@ impl Inner {
 pub struct Db {
     pub inner: Mutex<Inner>,
     pub on_push: Condvar,
+    pub replica_of: Option<(String, u16)>, // Some((host, port)) if this is a replica
+}
+
+impl Db {
+    pub fn is_replica(&self) -> bool {
+        self.replica_of.is_some()
+    }
 }
 
 pub type Store = Arc<Db>;
 
-pub fn new_store() -> Store {
+pub fn new_store(replica_of: Option<(String, u16)>) -> Store {
     Arc::new(Db {
         inner: Mutex::new(Inner {
             map: HashMap::new(),
@@ -53,6 +60,7 @@ pub fn new_store() -> Store {
             next_ticket: 0,
             versions: HashMap::new(),
         }),
-        on_push: Condvar::new()
+        on_push: Condvar::new(),
+        replica_of,
     })
 }

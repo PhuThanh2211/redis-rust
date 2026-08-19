@@ -11,12 +11,12 @@ use std::thread;
 use crate::store::new_store;
 
 fn main() {
-    let port = parse_port();
+    let (port, replica_of) = parse_port();
     println!("Redis Server listening here with port {port}!!!");
     let addr = format!("127.0.0.1:{port}");
 
     let listener = TcpListener::bind(&addr).unwrap();
-    let store = new_store();
+    let store = new_store(replica_of);
 
     for stream in listener.incoming() {
         match stream {
@@ -33,19 +33,37 @@ fn main() {
     }
 }
 
-fn parse_port() -> u16 {
+fn parse_port() -> (u16, Option<(String, u16)>) {
+    // Master Server: cargo run
+    // Slave Server: cargo run -- --port <PORT> --replicaof "<MASTER_HOST> <MASTER_PORT>"
+    // Client: redis-cli -p <PORT> INFO replication
     let args: Vec<String> = std::env::args().collect();
     let mut port = 6379; // default port
+    let mut replica_of: Option<(String, u16)> = None;
+
     let mut i = 1;
     while i < args.len() {
-        if args[i] == "--port" && i + 1 < args.len() {
-            if let Ok(p) = args[i + 1].parse() {
-                port = p
+        match args[i].as_str() {
+            "--port" if i + 1 < args.len() => {
+                if let Ok(p) = args[i + 1].parse() {
+                    port = p;
+                }
+
+                i += 2;
             }
-            i += 2;
-        } else {
-            i += 1;
+            "--replicaof" if i + 1 < args.len() => {
+                let mut parts = args[i + 1].split_whitespace();
+                if let (Some(h), Some(p)) = (parts.next(), parts.next()) {
+                    if let Ok(port_num) = p.parse() {
+                        replica_of = Some((h.to_string(), port_num));
+                    }
+                }
+
+                i += 2;
+            }
+            _ => i += 1,
         }
     }
-    port
+
+    (port, replica_of)
 }
