@@ -35,6 +35,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "XRANGE" => cmd_xrange(args, store),
         "XREAD" => cmd_xread(args, store),
         "INCR" => cmd_incr(args, store),
+        "INFO" => cmd_info(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -579,6 +580,26 @@ fn cmd_incr(args: &[Vec<u8>], store: &Store) -> Resp {
             guard.map.insert(key, RedisValue::Str("1".to_string(), None));
             Resp::Integer(1)
         }
+    }
+}
+
+fn cmd_info(args: &[Vec<u8>], store: &Store) -> Resp {
+    // Ex: redis-cli INFO replication
+    let section = args.get(1).map(|s| as_str(s).to_lowercase());
+
+    // as_deref in this case is used to convert Option<String> to Option<&str>
+    match section.as_deref() {
+        Some("replication") | None => {
+           let body = concat!(
+                "# Replication\r\n",
+               "role:master\r\n",
+               "connected_slaves:0\r\n",
+               "master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\n",
+               "master_repl_offset:0\r\n",
+           );
+            Resp::Bulk(Some(body.as_bytes().to_vec()))
+        }
+        _ => Resp::Bulk(Some(Vec::new())), // unknow section
     }
 }
 
