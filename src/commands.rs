@@ -36,6 +36,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "XREAD" => cmd_xread(args, store),
         "INCR" => cmd_incr(args, store),
         "INFO" => cmd_info(args, store),
+        "REPLCONF" => Resp::Simple("OK".into()),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
