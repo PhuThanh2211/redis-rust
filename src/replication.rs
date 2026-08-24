@@ -35,6 +35,8 @@ pub fn start_handshake(store: Store, my_port: u16) {
         let _ = read_reply(stream)?; // expect +OK
 
         // Step 3: PSYNC
+        send_command(stream, &["PSYNC", "?", "-1"])?;
+        let _ = read_reply(stream)?; // expect +FULLRESYNC <REPL_ID> 0
 
         Ok(())
     }
