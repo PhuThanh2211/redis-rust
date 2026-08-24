@@ -37,6 +37,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "INCR" => cmd_incr(args, store),
         "INFO" => cmd_info(args, store),
         "REPLCONF" => Resp::Simple("OK".into()),
+        "PSYNC" => Resp::Simple(format!("+FULLRESYNC {} 0", store.master_repl_id)),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -598,7 +599,8 @@ fn cmd_info(args: &[Vec<u8>], store: &Store) -> Resp {
             };
 
            let body = format!(
-                "# Replication\r\nrole:{role}\r\nconnected_slaves:0\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\nmaster_repl_offset:0\r\n",
+                "# Replication\r\nrole:{role}\r\nconnected_slaves:0\r\nmaster_replid:{}\r\nmaster_repl_offset:0\r\n",
+               store.master_repl_id
            );
             Resp::Bulk(Some(body.into_bytes()))
         }

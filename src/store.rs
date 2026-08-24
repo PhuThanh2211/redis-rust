@@ -42,6 +42,7 @@ pub struct Db {
     pub inner: Mutex<Inner>,
     pub on_push: Condvar,
     pub replica_of: Option<(String, u16)>, // Some((host, port)) if this is a replica
+    pub master_repl_id: String,
 }
 
 impl Db {
@@ -62,5 +63,6 @@ pub fn new_store(replica_of: Option<(String, u16)>) -> Store {
         }),
         on_push: Condvar::new(),
         replica_of,
+        master_repl_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
     })
 }
