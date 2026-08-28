@@ -8,6 +8,7 @@ pub enum Resp {
     Bulk(Option<Vec<u8>>), // None = null bulk string ($-1)
     Array(Vec<Resp>),
     NullArray, // *-1\r\n
+    Raw(Vec<u8>), // written verbatim, no framing added
 }
 
 impl Resp {
@@ -31,6 +32,7 @@ impl Resp {
                 out
             },
             Resp::NullArray => b"*-1\r\n".to_vec(),
+            Resp::Raw(bytes) => bytes.clone(),
         }
     }
 }

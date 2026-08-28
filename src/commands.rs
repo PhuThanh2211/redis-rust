@@ -1,4 +1,5 @@
 use std::collections::hash_map::Entry;
+use std::fmt::format;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::resp::Resp;
@@ -37,7 +38,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "INCR" => cmd_incr(args, store),
         "INFO" => cmd_info(args, store),
         "REPLCONF" => Resp::Simple("OK".into()),
-        "PSYNC" => Resp::Simple(format!("+FULLRESYNC {} 0", store.master_repl_id)),
+        "PSYNC" => cmd_psync(store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -606,6 +607,25 @@ fn cmd_info(args: &[Vec<u8>], store: &Store) -> Resp {
         }
         _ => Resp::Bulk(Some(Vec::new())), // unknow section
     }
+}
+
+fn cmd_psync(store: &Store) -> Resp {
+    let rdb = empty_rdb();
+
+    let mut out = format!("+FULLRESYNC {} 0\r\n", store.master_repl_id).into_bytes();
+    out.extend_from_slice(format!("${}\r\n", rdb.len()).as_bytes());
+    out.extend_from_slice(&rdb);
+    // NOTE: no trailing \r\n after the RDB payload.
+
+    Resp::Raw(out)
+}
+
+fn empty_rdb() -> Vec<u8> {
+    const HEX: &str = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
+    (0..HEX.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&HEX[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 fn collect_streams(guard: &std::sync::MutexGuard<'_, crate::store::Inner>,
