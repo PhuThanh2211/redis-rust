@@ -1,6 +1,8 @@
-use std::io::{Read, Write};
+use std::io::{BufReader, BufRead, Read, Write};
 use std::net::TcpStream;
 use crate::store::Store;
+use crate::resp::read_command;
+use crate::commands::dispatch;
 
 /// Connect to the master and perform the replication handshake
 pub fn start_handshake(store: Store, my_port: u16) {
@@ -13,47 +15,72 @@ pub fn start_handshake(store: Store, my_port: u16) {
         let addr = format!("{host}:{port}");
         match TcpStream::connect(&addr) {
             Ok(mut stream) => {
-                if let Err(e) = handshake(&mut stream, my_port) {
+                if let Err(e) = run(stream, store, my_port) {
                     println!("Replication handshake error: {e}");
                 }
             }
             Err(e) => println!("Failed to connect to master {addr}: {e}"),
         }
     });
+}
 
-    fn handshake(stream: &mut TcpStream, my_port: u16) -> std::io::Result<()> {
-        // Step 1: PING
-        send_command(stream, &["PING"])?;
-        let _ = read_reply(stream)?; // expect +PONG
+fn run(stream: TcpStream, store: Store, my_port: u16) -> std::io::Result<()> {
+    let mut writer = stream.try_clone()?;
+    let mut reader = BufReader::new(stream);
 
-        // Step 2: REPLCONF (twice)
-        let port_str = my_port.to_string();
-        send_command(stream, &["REPLCONF", "listening-port", &port_str])?;
-        let _ = read_reply(stream)?; // expect +OK
+    // ---- Handshake ----
+    send_command(&mut writer, &["PING"])?;
+    read_line(&mut reader)?;                // +PONG
 
-        send_command(stream, &["REPLCONF", "capa", "psync2"])?;
-        let _ = read_reply(stream)?; // expect +OK
+    let port_str= my_port.to_string();
+    send_command(&mut writer, &["REPLCONF", "listening-port", &port_str])?;
+    read_line(&mut reader)?;                // +OK
 
-        // Step 3: PSYNC
-        send_command(stream, &["PSYNC", "?", "-1"])?;
-        let _ = read_reply(stream)?; // expect +FULLRESYNC <REPL_ID> 0
+    send_command(&mut writer, &["REPLCONF", "capa", "psync2"])?;
+    read_line(&mut reader)?;                // +OK
 
-        Ok(())
-    }
+    send_command(&mut writer, &["PSYNC", "?", "-1"])?;
+    read_line(&mut reader)?;                // +FULLRESYNC <id> 0
 
-    /// Encode args as a RESP array of bulk strings and send.
-    fn send_command(stream: &mut TcpStream, args: &[&str]) -> std::io::Result<()> {
-        let mut out = format!("*{}\r\n", args.len());
-        for a in args {
-            out.push_str(&format!("${}\r\n{}\r\n", a.len(), a));
+    // ---- Read the RDB snapshot: $<len>\r\n<bytes>  (NO trailing CRLF) ----
+    read_rdb(&mut reader)?;
+
+    // ---- Process propagated commands forever, WITHOUT replying ----
+    loop {
+        match read_command(&mut reader)? {
+            Some(args) => {
+                let _ = dispatch(&args, &store);
+            }
+            None => break, // master closed the connection
         }
-
-        stream.write_all(out.as_bytes())
     }
 
-    fn read_reply(stream: &mut TcpStream) -> std::io::Result<String> {
-        let mut buf = [0u8; 512];
-        let n = stream.read(&mut buf)?;
-        Ok(String::from_utf8_lossy(&buf[..n]).into_owned())
+    Ok(())
+}
+
+fn send_command(writer: &mut TcpStream, args: &[&str]) -> std::io::Result<()> {
+    let mut out = format!("*{}\r\n", args.len());
+    for a in args {
+        out.push_str(&format!("${}\r\n{}\r\n", a.len(), a));
     }
+    writer.write_all(out.as_bytes())
+}
+
+fn read_line<R: BufRead>(reader: &mut R) -> std::io::Result<String> {
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    Ok(line)
+}
+
+fn read_rdb<R: BufRead>(reader: &mut R) -> std::io::Result<Vec<u8>> {
+    let mut header = String::new();
+    reader.read_line(&mut header)?;        // "$88\r\n"
+    let len: usize = header.trim_end()[1..]       // strip \r\n, drop '$'
+        .parse()
+        .map_err(|_| std::io::Error::new(
+            std::io::ErrorKind::InvalidData, "bad rdb len"))?;
+
+    let mut buf = vec![0u8; len];
+    reader.read_exact(&mut buf)?;       // exactly <len> bytes, no CRLF after
+    Ok(buf)
 }
