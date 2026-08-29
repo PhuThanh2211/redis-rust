@@ -49,7 +49,21 @@ fn run(stream: TcpStream, store: Store, my_port: u16) -> std::io::Result<()> {
     loop {
         match read_command(&mut reader)? {
             Some(args) => {
-                let _ = dispatch(&args, &store);
+                let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
+
+                if cmd == "REPLCONF" {
+                    let sub = args.get(1)
+                        .map(|a| String::from_utf8_lossy(a).to_uppercase())
+                        .unwrap_or_default();
+
+                    if sub == "GETACK" {
+                        send_command(&mut writer, &["REPLCONF", "ACK", "0"])?;
+                    }
+
+                } else {
+                    // Normal propagated write -> apply, DON'T reply.
+                    let _ = dispatch(&args, &store);
+                }
             }
             None => break, // master closed the connection
         }
