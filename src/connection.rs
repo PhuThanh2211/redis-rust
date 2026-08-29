@@ -25,8 +25,26 @@ pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
     loop {
         match read_command(&mut reader)? {
             Some(args) => {
+                let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
+
                 let reply = handle_command(&args, &store, &mut state);
                 writer.write_all(&reply.encode())?;
+
+                // After PSYNC + RDB, this connection becomes a replica link
+                if cmd == "PSYNC" {
+                    let replica = writer.try_clone()?;
+                    store.replicas.lock().unwrap().push(replica);
+                }
+
+                // Propagate write commands to all connected replicas.
+                if is_write_command(&cmd) {
+                    let encoded = encode_command(&args);
+                    let mut replicas = store.replicas.lock().unwrap();
+                    for r in replicas.iter_mut() {
+                        let _ = r.write_all(&encoded);
+                    }
+                }
+
             },
             None => break, // Client closed the connection (EOF)
         }
@@ -119,4 +137,12 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
         // All non-transaction commands go to the stateless dispatcher.
         _ => dispatch(args, store),
     }
+}
+
+fn is_write_command(cmd: &str) -> bool {
+    matches!(cmd, "SET" | "DEL" | "INCR" | "RPUSH" | "LPUSH" | "LPOP" | "XADD")
+}
+
+fn encode_command(args: &[Vec<u8>]) -> Vec<u8> {
+    Resp::Array(args.iter().map(|a| Resp::Bulk(Some(a.clone()))).collect()).encode()
 }
