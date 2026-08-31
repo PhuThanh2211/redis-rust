@@ -1,7 +1,7 @@
 use std::io::{BufReader, BufRead, Read, Write};
 use std::net::TcpStream;
 use crate::store::Store;
-use crate::resp::read_command;
+use crate::resp::{read_command, Resp};
 use crate::commands::dispatch;
 
 /// Connect to the master and perform the replication handshake
@@ -45,10 +45,13 @@ fn run(stream: TcpStream, store: Store, my_port: u16) -> std::io::Result<()> {
     // ---- Read the RDB snapshot: $<len>\r\n<bytes>  (NO trailing CRLF) ----
     read_rdb(&mut reader)?;
 
+    let mut offset: usize = 0;
+
     // ---- Process propagated commands forever, WITHOUT replying ----
     loop {
         match read_command(&mut reader)? {
             Some(args) => {
+                let len = command_len(&args);
                 let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
 
                 if cmd == "REPLCONF" {
@@ -57,19 +60,28 @@ fn run(stream: TcpStream, store: Store, my_port: u16) -> std::io::Result<()> {
                         .unwrap_or_default();
 
                     if sub == "GETACK" {
-                        send_command(&mut writer, &["REPLCONF", "ACK", "0"])?;
+                        let ack = offset.to_string();
+                        send_command(&mut writer, &["REPLCONF", "ACK", &ack])?;
                     }
 
                 } else {
                     // Normal propagated write -> apply, DON'T reply.
                     let _ = dispatch(&args, &store);
                 }
+
+                offset += len;
             }
             None => break, // master closed the connection
         }
     }
 
     Ok(())
+}
+
+fn command_len(args: &[Vec<u8>]) -> usize {
+    Resp::Array(args.iter().map(|a| Resp::Bulk(Some(a.clone()))).collect())
+        .encode()
+        .len()
 }
 
 fn send_command(writer: &mut TcpStream, args: &[&str]) -> std::io::Result<()> {
