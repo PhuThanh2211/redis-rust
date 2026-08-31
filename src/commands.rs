@@ -39,6 +39,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "INFO" => cmd_info(args, store),
         "REPLCONF" => Resp::Simple("OK".into()),
         "PSYNC" => cmd_psync(store),
+        "WAIT" => cmd_wait(store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -618,6 +619,11 @@ fn cmd_psync(store: &Store) -> Resp {
     // NOTE: no trailing \r\n after the RDB payload.
 
     Resp::Raw(out)
+}
+
+fn cmd_wait(store: &Store) -> Resp {
+    let count = store.replicas.lock().unwrap().len();
+    Resp::Integer(count as i64)
 }
 
 fn empty_rdb() -> Vec<u8> {
