@@ -1,5 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::fmt::format;
+use std::io::Write;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::resp::Resp;
@@ -39,7 +41,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "INFO" => cmd_info(args, store),
         "REPLCONF" => Resp::Simple("OK".into()),
         "PSYNC" => cmd_psync(store),
-        "WAIT" => cmd_wait(store),
+        "WAIT" => cmd_wait(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -621,9 +623,51 @@ fn cmd_psync(store: &Store) -> Resp {
     Resp::Raw(out)
 }
 
-fn cmd_wait(store: &Store) -> Resp {
-    let count = store.replicas.lock().unwrap().len();
-    Resp::Integer(count as i64)
+fn cmd_wait(args: &[Vec<u8>], store: &Store) -> Resp {
+    let num_replicas: usize = args.get(1)
+        .and_then(|a| as_str(a).parse().ok()).unwrap_or(0);
+    let timeout_ms: u64 = args.get(2)
+        .and_then(|a| as_str(a).parse().ok()).unwrap_or(0);
+
+    // Offset that replicas must have reached to be "in sync".
+    let target = store.master_offset.load(Ordering::SeqCst);
+
+    // No writes propagated yet -> every connected replica is trivially in sync.
+    if target == 0 {
+        let n = store.replicas.lock().unwrap().len();
+        return Resp::Integer(n as i64);
+    }
+
+    // Ask every replica for its current offset, and advance our own offset
+    // by the GETACK we just injected into the stream.
+    let getack = encode_command(&[b"REPLCONF".to_vec(), b"GETACK".to_vec(), b"*".to_vec()]);
+    {
+        let mut reps = store.replicas.lock().unwrap();
+        for r in reps.iter_mut() {
+            let _ = r.stream.write_all(&getack);
+        }
+    }
+
+    store.master_offset.fetch_add(getack.len(), Ordering::SeqCst);
+
+    // Block until enough replicas have acked >= target, or the timeout fires.
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut guard = store.replicas.lock().unwrap();
+
+    loop {
+        let count = guard.iter().filter(|r| r.ack >= target).count();
+        if count >= num_replicas {
+            return Resp::Integer(count as i64);
+        }
+
+        let now = Instant::now();
+        if now >= deadline {
+            return Resp::Integer(count as i64);
+        }
+
+        let (g, _) = store.ack_cv.wait_timeout(guard, deadline - now).unwrap();
+        guard = g;
+    }
 }
 
 fn empty_rdb() -> Vec<u8> {
@@ -744,4 +788,8 @@ fn as_str(b: &[u8]) -> String {
 
 fn wrong_type() -> Resp {
     Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into())
+}
+
+fn encode_command(args: &[Vec<u8>]) -> Vec<u8> {
+    Resp::Array(args.iter().map(|a| Resp::Bulk(Some(a.clone()))).collect()).encode()
 }

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::TcpStream;
 use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::AtomicUsize;
 use std::time::Instant;
 
 pub struct StreamEntry {
@@ -12,6 +13,11 @@ pub enum RedisValue {
     Str(String, Option<Instant>),
     List(Vec<String>),
     Stream(Vec<StreamEntry>),
+}
+
+pub struct ReplicaConn {
+    pub stream: TcpStream,  // write handle (propagation + GETACK)
+    pub ack: usize,         // latest offset this replica has acknowledged
 }
 
 pub struct Inner {
@@ -44,7 +50,9 @@ pub struct Db {
     pub on_push: Condvar,
     pub replica_of: Option<(String, u16)>, // Some((host, port)) if this is a replica
     pub master_repl_id: String,
-    pub replicas: Mutex<Vec<TcpStream>>, // write handles to connected replicas
+    pub replicas: Mutex<Vec<ReplicaConn>>, // write handles to connected replicas
+    pub master_offset: AtomicUsize,     // bytes propagated on the repl stream
+    pub ack_cv: Condvar,                // notified when a replica ACKs
 }
 
 impl Db {
@@ -67,5 +75,7 @@ pub fn new_store(replica_of: Option<(String, u16)>) -> Store {
         replica_of,
         master_repl_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
         replicas: Mutex::new(Vec::new()),
+        master_offset: AtomicUsize::new(0),
+        ack_cv: Condvar::new(),
     })
 }

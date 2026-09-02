@@ -1,9 +1,9 @@
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
-
+use std::sync::atomic::Ordering;
 use crate::commands::dispatch;
 use crate::resp::{read_command, Resp};
-use crate::store::Store;
+use crate::store::{ReplicaConn, Store};
 
 struct ConnState {
     in_multi: bool,
@@ -22,27 +22,55 @@ pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
         watched: Vec::new(),
     };
 
+    let mut my_replica_index: Option<usize> = None;
+
     loop {
         match read_command(&mut reader)? {
             Some(args) => {
                 let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
+                let sub = args.get(1)
+                    .map(|a| String::from_utf8_lossy(a).to_uppercase())
+                    .unwrap_or_default();
+
+                // A replica reporting its offset: record it, send NO reply
+                if cmd == "REPLCONF" && sub == "ACK" {
+                    if let (Some(i), Some(off_byte)) = (my_replica_index, args.get(2)) {
+                        if let Ok(off) = String::from_utf8_lossy(off_byte).parse::<usize>() {
+                            let mut reps = store.replicas.lock().unwrap();
+                            if let Some(r) = reps.get_mut(i) {
+                                r.ack = off;
+                            }
+
+                            drop(reps);
+                            store.ack_cv.notify_all();
+                        }
+                    }
+                    continue; // no reply, no propagation
+                }
 
                 let reply = handle_command(&args, &store, &mut state);
                 writer.write_all(&reply.encode())?;
 
                 // After PSYNC + RDB, this connection becomes a replica link
                 if cmd == "PSYNC" {
-                    let replica = writer.try_clone()?;
-                    store.replicas.lock().unwrap().push(replica);
+                    let mut reps = store.replicas.lock().unwrap();
+                    my_replica_index = Some(reps.len());
+                    reps.push(ReplicaConn{
+                        stream: writer.try_clone()?,
+                        ack: 0
+                    });
                 }
 
-                // Propagate write commands to all connected replicas.
+                // Propagate writes to all replicas and advance the master offset.
                 if is_write_command(&cmd) {
                     let encoded = encode_command(&args);
-                    let mut replicas = store.replicas.lock().unwrap();
-                    for r in replicas.iter_mut() {
-                        let _ = r.write_all(&encoded);
+                    {
+                        let mut reps = store.replicas.lock().unwrap();
+                        for r in reps.iter_mut() {
+                            let _ = r.stream.write_all(&encoded);
+                        }
                     }
+                    store.master_offset.fetch_add(encoded.len(), Ordering::SeqCst);
                 }
 
             },
