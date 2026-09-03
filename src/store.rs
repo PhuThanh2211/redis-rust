@@ -53,6 +53,8 @@ pub struct Db {
     pub replicas: Mutex<Vec<ReplicaConn>>, // write handles to connected replicas
     pub master_offset: AtomicUsize,     // bytes propagated on the repl stream
     pub ack_cv: Condvar,                // notified when a replica ACKs
+    pub dir: String,
+    pub dbfilename: String,
 }
 
 impl Db {
@@ -63,7 +65,7 @@ impl Db {
 
 pub type Store = Arc<Db>;
 
-pub fn new_store(replica_of: Option<(String, u16)>) -> Store {
+pub fn new_store(replica_of: Option<(String, u16)>, dir: String, dbfilename: String) -> Store {
     Arc::new(Db {
         inner: Mutex::new(Inner {
             map: HashMap::new(),
@@ -77,5 +79,7 @@ pub fn new_store(replica_of: Option<(String, u16)>) -> Store {
         replicas: Mutex::new(Vec::new()),
         master_offset: AtomicUsize::new(0),
         ack_cv: Condvar::new(),
+        dir,
+        dbfilename,
     })
 }

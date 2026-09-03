@@ -42,6 +42,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "REPLCONF" => Resp::Simple("OK".into()),
         "PSYNC" => cmd_psync(store),
         "WAIT" => cmd_wait(args, store),
+        "CONFIG" => cmd_config(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -668,6 +669,30 @@ fn cmd_wait(args: &[Vec<u8>], store: &Store) -> Resp {
         let (g, _) = store.ack_cv.wait_timeout(guard, deadline - now).unwrap();
         guard = g;
     }
+}
+
+fn cmd_config(args: &[Vec<u8>], store: &Store) -> Resp {
+    // CONFIG GET <param>
+    if args.len() < 3 {
+        return wrong_args("config");
+    }
+
+    let sub = as_str(&args[1]).to_uppercase();
+    if sub != "GET" {
+        return Resp::Error("ERR unknown CONFIG subcommand".into());
+    }
+
+    let param = as_str(&args[2]).to_lowercase();
+    let value = match param.as_str() {
+        "dir" => store.dir.clone(),
+        "dbfilename" => store.dbfilename.clone(),
+        _ => return Resp::Array(vec![])
+    };
+
+    Resp::Array(vec![
+        Resp::Bulk(Some(param.into_bytes())),
+        Resp::Bulk(Some(value.into_bytes())),
+    ])
 }
 
 fn empty_rdb() -> Vec<u8> {

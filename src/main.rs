@@ -12,11 +12,11 @@ use std::thread;
 use crate::store::new_store;
 
 fn main() {
-    let (port, replica_of) = parse_port();
+    let (port, replica_of, dir, dbfilename) = parse_port();
     println!("Redis Server listening here with port {port}!!!");
     let addr = format!("127.0.0.1:{port}");
 
-    let store = new_store(replica_of);
+    let store = new_store(replica_of, dir, dbfilename);
 
     // If we're a replica, connect to the master and start the handshake.
     replication::start_handshake(store.clone(), port);
@@ -37,13 +37,15 @@ fn main() {
     }
 }
 
-fn parse_port() -> (u16, Option<(String, u16)>) {
+fn parse_port() -> (u16, Option<(String, u16)>, String, String) {
     // Master Server: cargo run
     // Slave Server: cargo run -- --port <PORT> --replicaof "<MASTER_HOST> <MASTER_PORT>"
     // Client: redis-cli -p <PORT> INFO replication
     let args: Vec<String> = std::env::args().collect();
     let mut port = 6379; // default port
     let mut replica_of: Option<(String, u16)> = None;
+    let mut dir = String::new();
+    let mut dbfilename = String::new();
 
     let mut i = 1;
     while i < args.len() {
@@ -65,9 +67,17 @@ fn parse_port() -> (u16, Option<(String, u16)>) {
 
                 i += 2;
             }
+            "--dir" if i + 1 < args.len() => {
+                dir = args[i + 1].clone();
+                i += 2;
+            }
+            "--dbfilename" if i + 1 < args.len() => {
+                dbfilename = args[i + 1].clone();
+                i += 2;
+            }
             _ => i += 1,
         }
     }
 
-    (port, replica_of)
+    (port, replica_of, dir, dbfilename)
 }
