@@ -43,6 +43,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "PSYNC" => cmd_psync(store),
         "WAIT" => cmd_wait(args, store),
         "CONFIG" => cmd_config(args, store),
+        "KEYS" => cmd_keys(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -693,6 +694,19 @@ fn cmd_config(args: &[Vec<u8>], store: &Store) -> Resp {
         Resp::Bulk(Some(param.into_bytes())),
         Resp::Bulk(Some(value.into_bytes())),
     ])
+}
+
+fn cmd_keys(args: &[Vec<u8>], store: &Store) -> Resp {
+    // KEYS "*"
+    if args.len() < 2 {
+        return wrong_args("keys");
+    }
+
+    let guard = store.inner.lock().unwrap();
+    let keys: Vec<Resp> = guard.map.keys()
+        .map(|k| Resp::Bulk(Some(k.clone().into_bytes())))
+        .collect();
+    Resp::Array(keys)
 }
 
 fn empty_rdb() -> Vec<u8> {
