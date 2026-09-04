@@ -99,5 +99,11 @@ fn parse_port() -> (u16, Option<(String, u16)>, String, String) {
         }
     }
 
+    if dir.is_empty() {
+        dir = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+    }
+
     (port, replica_of, dir, dbfilename)
 }
