@@ -9,7 +9,7 @@ mod rdb;
 
 use std::net::TcpListener;
 use std::thread;
-
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::store::{new_store, RedisValue};
 
 fn main() {
@@ -18,11 +18,24 @@ fn main() {
     let addr = format!("127.0.0.1:{port}");
 
     let store = new_store(replica_of, dir.clone(), dbfilename.clone());
-
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     // Load existing RDB data (if any) into the store.
-    for (key, value) in rdb::load(&dir, &dbfilename) {
+    for (key, value, expiry) in rdb::load(&dir, &dbfilename) {
+        let deadline = match expiry {
+            Some(exp_ms) => {
+                if exp_ms <= now_ms {
+                    continue; // already expired -> don't load it at all
+                }
+                Some(Instant::now() + Duration::from_millis(exp_ms - now_ms))
+            }
+            None => None,
+        };
+
         let mut guard = store.inner.lock().unwrap();
-        guard.map.insert(key, RedisValue::Str(value, None));
+        guard.map.insert(key, RedisValue::Str(value, deadline));
     }
 
     // If we're a replica, connect to the master and start the handshake.

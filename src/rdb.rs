@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 /// Load keys/values from the RDB file. Missing/invalid file -> empty vec.
-pub fn load(dir: &str, dbfilename: &str) -> Vec<(String, String)> {
+pub fn load(dir: &str, dbfilename: &str) -> Vec<(String, String, Option<u64>)> {
     if dir.is_empty() || dbfilename.is_empty() {
         return Vec::new();
     }
@@ -81,7 +81,7 @@ fn read_string(c: &mut Cursor) -> Option<String> {
     }
 }
 
-fn parse(data: &[u8]) -> Option<Vec<(String, String)>> {
+fn parse(data: &[u8]) -> Option<Vec<(String, String, Option<u64>)>> {
     let mut c = Cursor { data, pos: 0 };
 
     // Header: "REDIS0011" (9 bytes)
@@ -106,18 +106,20 @@ fn parse(data: &[u8]) -> Option<Vec<(String, String)>> {
                 read_len(&mut c)?;
                 read_len(&mut c)?;
             }
-            0xFC => { // expire in ms: 8 bytes LE, then a key-value follows
-                c.take(8)?;
-                read_kv(&mut c, &mut out)?;
+            0xFC => { // expire in ms: 8-byte little-endian timestamp
+                let b = c.take(8)?;
+                let ms = u64::from_le_bytes([b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7]]);
+                read_kv(&mut c, &mut out, Some(ms))?;
             }
-            0xFD => { // expire in secs: 4 bytes LE, then a key-value follows
-                c.take(4)?;
-                read_kv(&mut c, &mut out)?;
+            0xFD => { // expire in seconds: 4-byte little-endian timestamp
+                let b = c.take(4)?;
+                let secs = u32::from_le_bytes([b[0],b[1],b[2],b[3]]) as u64;
+                read_kv(&mut c, &mut out, Some(secs * 1000))?; // normalize to ms
             }
-            0x00 => { // value type = string, no expire: this byte IS the type flag
+            0x00 => { // no expiry
                 let key = read_string(&mut c)?;
                 let value = read_string(&mut c)?;
-                out.push((key, value));
+                out.push((key, value, None));
             }
             0xFF => break, // end of file (checksum follows, ignore)
             _ => return None, // unknown opcode
@@ -129,10 +131,14 @@ fn parse(data: &[u8]) -> Option<Vec<(String, String)>> {
 
 // After an expire opcode we've consumed the timestamp; next is the value-type
 // flag, then key + value.
-fn read_kv(c: &mut Cursor, out: &mut Vec<(String, String)>) -> Option<()> {
-    let _type_flag = c.byte()?; // 0x00 = string (only type in this stage)
+fn read_kv(
+    c: &mut Cursor,
+    out: &mut Vec<(String, String, Option<u64>)>,
+    expiry: Option<u64>,
+) -> Option<()> {
+    let _type_flag = c.byte()?;
     let key = read_string(c)?;
     let value = read_string(c)?;
-    out.push((key, value));
+    out.push((key, value, expiry));
     Some(())
 }
