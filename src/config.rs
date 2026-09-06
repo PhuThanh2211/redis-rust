@@ -71,4 +71,8 @@ impl Config {
     pub fn aof_file(&self) -> PathBuf {
         self.aof_dir().join(format!("{}.1.incr.aof", &self.appendfilename))
     }
+
+    pub fn aof_manifest(&self) -> PathBuf {
+        self.aof_dir().join(format!("{}.manifest", &self.appendfilename))
+    }
 }
