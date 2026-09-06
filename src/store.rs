@@ -55,6 +55,10 @@ pub struct Db {
     pub ack_cv: Condvar,                // notified when a replica ACKs
     pub dir: String,
     pub dbfilename: String,
+    pub appendonly: String,
+    pub appenddirname: String,
+    pub appendfilename: String,
+    pub appendfsync: String,
 }
 
 impl Db {
@@ -65,7 +69,8 @@ impl Db {
 
 pub type Store = Arc<Db>;
 
-pub fn new_store(replica_of: Option<(String, u16)>, dir: String, dbfilename: String) -> Store {
+pub fn new_store(replica_of: Option<(String, u16)>, dir: String, dbfilename: String,
+                 appendonly: String, appenddirname: String, appendfilename: String, appendfsync: String) -> Store {
     Arc::new(Db {
         inner: Mutex::new(Inner {
             map: HashMap::new(),
@@ -79,7 +84,7 @@ pub fn new_store(replica_of: Option<(String, u16)>, dir: String, dbfilename: Str
         replicas: Mutex::new(Vec::new()),
         master_offset: AtomicUsize::new(0),
         ack_cv: Condvar::new(),
-        dir,
-        dbfilename,
+        dir, dbfilename,
+        appendonly, appenddirname, appendfilename, appendfsync
     })
 }

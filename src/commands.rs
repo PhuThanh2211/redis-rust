@@ -687,10 +687,10 @@ fn cmd_config(args: &[Vec<u8>], store: &Store) -> Resp {
     let value = match param.as_str() {
         "dir" => store.dir.clone(),
         "dbfilename" => store.dbfilename.clone(),
-        "appendonly" => "no".to_string(),
-        "appenddirname" => "appendonlydir".to_string(),
-        "appendfilename" => "appendonly.aof".to_string(),
-        "appendfsync" => "everysec".to_string(),
+        "appendonly" => store.appendonly.to_string(),
+        "appenddirname" => store.appenddirname.to_string(),
+        "appendfilename" => store.appendfilename.to_string(),
+        "appendfsync" => store.appendfsync.to_string(),
         _ => return Resp::Array(vec![])
     };
 

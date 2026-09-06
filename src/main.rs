@@ -13,11 +13,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::store::{new_store, RedisValue};
 
 fn main() {
-    let (port, replica_of, dir, dbfilename) = parse_port();
+    let (port, replica_of, dir, dbfilename,
+        appendonly, appenddirname, appendfilename, appendfsync) = parse_port();
     println!("Redis Server listening here with port {port}!!!");
     let addr = format!("127.0.0.1:{port}");
 
-    let store = new_store(replica_of, dir.clone(), dbfilename.clone());
+    let store = new_store(replica_of, dir.clone(), dbfilename.clone(), appendonly, appenddirname, appendfilename, appendfsync);
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -57,7 +58,7 @@ fn main() {
     }
 }
 
-fn parse_port() -> (u16, Option<(String, u16)>, String, String) {
+fn parse_port() -> (u16, Option<(String, u16)>, String, String, String, String, String, String) {
     // Master Server: cargo run
     // Slave Server: cargo run -- --port <PORT> --replicaof "<MASTER_HOST> <MASTER_PORT>"
     // Client: redis-cli -p <PORT> INFO replication
@@ -66,6 +67,13 @@ fn parse_port() -> (u16, Option<(String, u16)>, String, String) {
     let mut replica_of: Option<(String, u16)> = None;
     let mut dir = String::new();
     let mut dbfilename = String::new();
+
+    // AOF options pre-loaded with defaults:
+    let mut appendonly = "no".to_string();
+    let mut appenddirname = "appendonlydir".to_string();
+    let mut appendfilename = "appendonly.aof".to_string();
+    let mut appendfsync = "everysec".to_string();
+
 
     let mut i = 1;
     while i < args.len() {
@@ -87,14 +95,12 @@ fn parse_port() -> (u16, Option<(String, u16)>, String, String) {
 
                 i += 2;
             }
-            "--dir" if i + 1 < args.len() => {
-                dir = args[i + 1].clone();
-                i += 2;
-            }
-            "--dbfilename" if i + 1 < args.len() => {
-                dbfilename = args[i + 1].clone();
-                i += 2;
-            }
+            "--dir" if i + 1 < args.len()            => { dir = args[i+1].clone(); i += 2; }
+            "--dbfilename" if i + 1 < args.len()     => { dbfilename = args[i+1].clone(); i += 2; }
+            "--appendonly" if i + 1 < args.len()     => { appendonly = args[i+1].clone(); i += 2; }
+            "--appenddirname" if i + 1 < args.len()  => { appenddirname = args[i+1].clone(); i += 2; }
+            "--appendfilename" if i + 1 < args.len() => { appendfilename = args[i+1].clone(); i += 2; }
+            "--appendfsync" if i + 1 < args.len()    => { appendfsync = args[i+1].clone(); i += 2; }
             _ => i += 1,
         }
     }
@@ -105,5 +111,5 @@ fn parse_port() -> (u16, Option<(String, u16)>, String, String) {
             .unwrap_or_default();
     }
 
-    (port, replica_of, dir, dbfilename)
+    (port, replica_of, dir, dbfilename, appendonly, appenddirname, appendfilename, appendfsync)
 }
