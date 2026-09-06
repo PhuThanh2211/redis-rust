@@ -44,6 +44,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "WAIT" => cmd_wait(args, store),
         "CONFIG" => cmd_config(args, store),
         "KEYS" => cmd_keys(args, store),
+        "SUBSCRIBE" => cmd_subcribe(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -711,6 +712,19 @@ fn cmd_keys(args: &[Vec<u8>], store: &Store) -> Resp {
         .map(|k| Resp::Bulk(Some(k.clone().into_bytes())))
         .collect();
     Resp::Array(keys)
+}
+
+fn cmd_subcribe(args: &[Vec<u8>], store: &Store) -> Resp {
+    // SUBSCRIBE mychan
+    if args.len() < 2 {
+        return wrong_args("subcribe");
+    }
+
+    Resp::Array(vec![
+        Resp::Bulk(Some(as_str(&args[0]).to_lowercase().into_bytes())),
+        Resp::Bulk(Some(as_str(&args[1]).into_bytes())),
+        Resp::Integer(1)
+    ])
 }
 
 fn empty_rdb() -> Vec<u8> {
