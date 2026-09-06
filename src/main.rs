@@ -8,10 +8,14 @@ mod replication;
 mod rdb;
 mod config;
 
+use std::fs::File;
+use std::io::BufReader;
 use std::net::TcpListener;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use crate::commands::dispatch;
 use crate::config::Config;
+use crate::resp::read_command;
 use crate::store::{new_store, RedisValue, Store};
 
 fn main() {
@@ -34,6 +38,7 @@ fn main() {
 
     let store = new_store(config);
     load_rdb(&store);
+    replay_aof(&store);
 
     // If we're a replica, connect to the master and start the handshake.
     replication::start_handshake(store.clone(), store.config.port);
@@ -69,5 +74,26 @@ fn load_rdb(store: &Store) {
         };
         let mut guard = store.inner.lock().unwrap();
         guard.map.insert(key, RedisValue::Str(value, deadline));
+    }
+}
+
+fn replay_aof(store: &Store) {
+    if !store.config.aof_enable() {
+        return;
+    }
+
+    let path = match store.config.active_aof_file() {
+        Some(p) => p,
+        None => return, // No manifest / No incremental entry
+    };
+
+    let file = match File::open(&path) {
+        Ok(f) => f,
+        Err(_) => return, // AOF file missing -> nothing to replay
+    };
+
+    let mut reader = BufReader::new(file);
+    while let Ok(Some(args)) = read_command(&mut reader) {
+        let _ = dispatch(&args, store);
     }
 }
