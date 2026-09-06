@@ -18,7 +18,15 @@ fn main() {
     println!("Redis Server listening here with port {port}!!!");
     let addr = format!("127.0.0.1:{port}");
 
-    let store = new_store(replica_of, dir.clone(), dbfilename.clone(), appendonly, appenddirname, appendfilename, appendfsync);
+    if appendonly == "yes" {
+        let aof_path = std::path::Path::new(&dir).join(&appenddirname);
+        if let Err(e) = std::fs::create_dir_all(&aof_path) {
+            println!("Failed to create AOF directory {}: {e}", aof_path.display());
+        }
+    }
+
+    let store = new_store(replica_of, dir.clone(), dbfilename.clone(),
+                          appendonly, appenddirname, appendfilename, appendfsync);
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()

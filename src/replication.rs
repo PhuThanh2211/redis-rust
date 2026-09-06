@@ -14,7 +14,7 @@ pub fn start_handshake(store: Store, my_port: u16) {
     std::thread::spawn(move || {
         let addr = format!("{host}:{port}");
         match TcpStream::connect(&addr) {
-            Ok(mut stream) => {
+            Ok(stream) => {
                 if let Err(e) = run(stream, store, my_port) {
                     println!("Replication handshake error: {e}");
                 }
