@@ -3,6 +3,7 @@ use std::net::TcpStream;
 use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::AtomicUsize;
 use std::time::Instant;
+use crate::config::Config;
 
 pub struct StreamEntry {
     pub id: String,                     // e.g. "1526919030474-0"
@@ -48,29 +49,22 @@ impl Inner {
 pub struct Db {
     pub inner: Mutex<Inner>,
     pub on_push: Condvar,
-    pub replica_of: Option<(String, u16)>, // Some((host, port)) if this is a replica
     pub master_repl_id: String,
     pub replicas: Mutex<Vec<ReplicaConn>>, // write handles to connected replicas
     pub master_offset: AtomicUsize,     // bytes propagated on the repl stream
     pub ack_cv: Condvar,                // notified when a replica ACKs
-    pub dir: String,
-    pub dbfilename: String,
-    pub appendonly: String,
-    pub appenddirname: String,
-    pub appendfilename: String,
-    pub appendfsync: String,
+    pub config: Config                  // <-- was: replica_of, dir, dbfilename, 4x append*
 }
 
 impl Db {
     pub fn is_replica(&self) -> bool {
-        self.replica_of.is_some()
+        self.config.replica_of.is_some()
     }
 }
 
 pub type Store = Arc<Db>;
 
-pub fn new_store(replica_of: Option<(String, u16)>, dir: String, dbfilename: String,
-                 appendonly: String, appenddirname: String, appendfilename: String, appendfsync: String) -> Store {
+pub fn new_store(config: Config) -> Store {
     Arc::new(Db {
         inner: Mutex::new(Inner {
             map: HashMap::new(),
@@ -79,12 +73,10 @@ pub fn new_store(replica_of: Option<(String, u16)>, dir: String, dbfilename: Str
             versions: HashMap::new(),
         }),
         on_push: Condvar::new(),
-        replica_of,
         master_repl_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
         replicas: Mutex::new(Vec::new()),
         master_offset: AtomicUsize::new(0),
         ack_cv: Condvar::new(),
-        dir, dbfilename,
-        appendonly, appenddirname, appendfilename, appendfsync
+        config,
     })
 }

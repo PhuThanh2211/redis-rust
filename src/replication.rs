@@ -6,7 +6,7 @@ use crate::commands::dispatch;
 
 /// Connect to the master and perform the replication handshake
 pub fn start_handshake(store: Store, my_port: u16) {
-    let (host, port) = match &store.replica_of {
+    let (host, port) = match &store.config.replica_of {
         Some(hp) => hp.clone(),
         None => return, // not a replica -> nothing to do
     };
