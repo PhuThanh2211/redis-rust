@@ -8,7 +8,8 @@ use crate::store::{ReplicaConn, Store};
 struct ConnState {
     in_multi: bool,
     queue: Vec<Vec<Vec<u8>>>,
-    watched: Vec<(String, u64)>, // keys being watched
+    watched: Vec<(String, u64)>,    // keys being watched
+    subscribed: Vec<String>,        // channes this client is subscribed to
 }
 
 pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
@@ -20,6 +21,7 @@ pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
         in_multi: false,
         queue: Vec::new(),
         watched: Vec::new(),
+        subscribed: Vec::new(),
     };
 
     let mut my_replica_index: Option<usize> = None;
@@ -169,6 +171,23 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
             state.queue.clear();
             state.watched.clear();
             Resp::Simple("OK".into())
+        }
+        "SUBSCRIBE" => {
+            if args.len() < 2 {
+                return Resp::Error("ERR wrong number of arguments for 'subscribe' command".into());
+            }
+
+            let channel = String::from_utf8_lossy(&args[1]).into_owned();
+
+            if !state.subscribed.contains(&channel) {
+                state.subscribed.push(channel.clone());
+            }
+
+            Resp::Array(vec![
+                Resp::Bulk(Some(b"subscribe".to_vec())),
+                Resp::Bulk(Some(channel.into_bytes())),
+                Resp::Integer(state.subscribed.len() as i64),
+            ])
         }
         _ if state.in_multi => {
             // queue the raw command; don't execute or touch the DB
