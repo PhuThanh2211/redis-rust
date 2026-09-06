@@ -19,16 +19,16 @@ fn main() {
     println!("Redis Server listening here with port {}!!!", config.port);
     let addr = format!("127.0.0.1:{}", config.port);
 
-    if config.appendonly == "yes" {
-        if let Err(e) = std::fs::create_dir_all(config.aof_dir()) {
-            println!("Failed to create AOF directory: {e}");
+    if config.aof_enable() {
+        let _ = std::fs::create_dir_all(config.aof_dir());
+
+        if !config.aof_file().exists() {
+            let _ = std::fs::File::create(config.aof_file());
         }
-        if let Err(e) = std::fs::File::create(config.aof_file()) {
-            println!("Failed to create AOF file: {e}");
-        }
-        let manifest_line = format!("file {}.1.incr.aof seq 1 type i\n", config.appendfilename);
-        if let Err(e) = std::fs::write(config.aof_manifest(), manifest_line) {
-            println!("Failed to create manifest file: {e}");
+
+        if !config.aof_manifest().exists() {
+            let manifest_line = format!("file {}.1.incr.aof seq 1 type i\n", config.appendfilename);
+            let _ = std::fs::write(config.aof_manifest(), manifest_line);
         }
     }
 

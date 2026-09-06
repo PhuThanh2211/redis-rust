@@ -63,6 +63,10 @@ impl Config {
 
         cfg
     }
+    
+    pub fn aof_enable(&self) -> bool {
+        self.appendonly == "yes"
+    }
 
     pub fn aof_dir(&self) -> PathBuf {
         Path::new(&self.dir).join(&self.appenddirname)
@@ -74,5 +78,34 @@ impl Config {
 
     pub fn aof_manifest(&self) -> PathBuf {
         self.aof_dir().join(format!("{}.manifest", &self.appendfilename))
+    }
+
+    pub fn active_aof_file(&self) -> Option<PathBuf> {
+        let manifest = std::fs::read_to_string(self.aof_manifest()).ok()?;
+        let mut active = None;
+
+        for line in manifest.lines() {
+            // Each line is: file <name> seq <n> type <t>
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            let mut file_name = None;
+            let mut is_incr = false;
+
+            let mut i = 0;
+            while i + 1 < tokens.len() {
+                match tokens[i] {
+                    "file" => file_name = Some(tokens[i + 1]),
+                    "type" => is_incr = tokens[i + 1] == "i",
+                    _ => {}
+                }
+                i += 2;
+            }
+
+            if is_incr {
+                if let Some(name) = file_name {
+                    active = Some(self.aof_dir().join(name));
+                }
+            }
+        }
+        active
     }
 }

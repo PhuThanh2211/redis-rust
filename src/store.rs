@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::fs::{File, OpenOptions};
 use std::net::TcpStream;
 use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::AtomicUsize;
@@ -53,7 +54,8 @@ pub struct Db {
     pub replicas: Mutex<Vec<ReplicaConn>>, // write handles to connected replicas
     pub master_offset: AtomicUsize,     // bytes propagated on the repl stream
     pub ack_cv: Condvar,                // notified when a replica ACKs
-    pub config: Config                  // <-- was: replica_of, dir, dbfilename, 4x append*
+    pub config: Config,                 // <-- was: replica_of, dir, dbfilename, 4x append*
+    pub aof: Mutex<Option<File>>        // open append handle to the active AOF file
 }
 
 impl Db {
@@ -65,6 +67,12 @@ impl Db {
 pub type Store = Arc<Db>;
 
 pub fn new_store(config: Config) -> Store {
+    let aof = if config.aof_enable() {
+        config.active_aof_file().and_then(|path| OpenOptions::new().append(true).open(path).ok())
+    } else {
+        None
+    };
+
     Arc::new(Db {
         inner: Mutex::new(Inner {
             map: HashMap::new(),
@@ -77,6 +85,7 @@ pub fn new_store(config: Config) -> Store {
         replicas: Mutex::new(Vec::new()),
         master_offset: AtomicUsize::new(0),
         ack_cv: Condvar::new(),
+        aof: Mutex::new(aof),
         config,
     })
 }

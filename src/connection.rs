@@ -49,6 +49,19 @@ pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
                 }
 
                 let reply = handle_command(&args, &store, &mut state);
+
+                // Persist write commands to the AOF *before* replying (fsync always).
+                if is_write_command(&cmd) && store.config.aof_enable() {
+                    let encoded = encode_command(&args);
+                    let mut aof = store.aof.lock().unwrap();
+                    if let Some(file) = aof.as_mut() {
+                        let _ = file.write_all(&encoded);
+                        if store.config.appendfsync == "always" {
+                            let _ = file.sync_all(); // flush to disk before responding
+                        }
+                    }
+                }
+
                 writer.write_all(&reply.encode())?;
 
                 // After PSYNC + RDB, this connection becomes a replica link
