@@ -55,7 +55,8 @@ pub struct Db {
     pub master_offset: AtomicUsize,     // bytes propagated on the repl stream
     pub ack_cv: Condvar,                // notified when a replica ACKs
     pub config: Config,                 // <-- was: replica_of, dir, dbfilename, 4x append*
-    pub aof: Mutex<Option<File>>        // open append handle to the active AOF file
+    pub aof: Mutex<Option<File>>,       // open append handle to the active AOF file
+    pub channels: Mutex<HashMap<String, usize>>, // channel -> number of subscribers
 }
 
 impl Db {
@@ -86,6 +87,7 @@ pub fn new_store(config: Config) -> Store {
         master_offset: AtomicUsize::new(0),
         ack_cv: Condvar::new(),
         aof: Mutex::new(aof),
+        channels: Mutex::new(HashMap::new()),
         config,
     })
 }

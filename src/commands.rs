@@ -44,6 +44,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "WAIT" => cmd_wait(args, store),
         "CONFIG" => cmd_config(args, store),
         "KEYS" => cmd_keys(args, store),
+        "PUBLISH" => cmd_publish(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -711,6 +712,21 @@ fn cmd_keys(args: &[Vec<u8>], store: &Store) -> Resp {
         .map(|k| Resp::Bulk(Some(k.clone().into_bytes())))
         .collect();
     Resp::Array(keys)
+}
+
+fn cmd_publish(args: &[Vec<u8>], store: &Store) -> Resp {
+    // PUBLISH channel_name message_contents
+    if args.len() < 3 {
+        return wrong_args("publish");
+    }
+
+    let channel = as_str(&args[1]);
+    let count = store.channels.lock().unwrap()
+        .get(&channel)
+        .copied()
+        .unwrap_or(0);
+
+    Resp::Integer(count as i64)
 }
 
 fn empty_rdb() -> Vec<u8> {

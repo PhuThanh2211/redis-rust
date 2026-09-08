@@ -187,6 +187,10 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
 
             if !state.subscribed.contains(&channel) {
                 state.subscribed.push(channel.clone());
+
+                // New subscription for THIS client -> increment shared count.
+                let mut channels = store.channels.lock().unwrap();
+                *channels.entry(channel.clone()).or_insert(0) += 1;
             }
 
             Resp::Array(vec![
