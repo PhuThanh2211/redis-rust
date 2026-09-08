@@ -103,6 +103,12 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
 
     let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
 
+    // Subscribed mode: only a small set of commands is allowed.
+    if !state.subscribed.is_empty() && !is_allowed_in_subscribed(&cmd) {
+        let name = String::from_utf8_lossy(&args[0]).to_lowercase();
+        return Resp::Error(format!("ERR Can't execute '{name}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context"));
+    }
+
     match cmd.as_str() {
         "MULTI" => {
             state.in_multi = true;
@@ -205,4 +211,10 @@ fn is_write_command(cmd: &str) -> bool {
 
 fn encode_command(args: &[Vec<u8>]) -> Vec<u8> {
     Resp::Array(args.iter().map(|a| Resp::Bulk(Some(a.clone()))).collect()).encode()
+}
+
+fn is_allowed_in_subscribed(cmd: &str) -> bool {
+    matches!(cmd,
+        "SUBSCRIBE" | "UNSUBSCRIBE" | "PSUBSCRIBE" | "PUNSUBSCRIBE" | "PING" | "QUIT"
+    )
 }
