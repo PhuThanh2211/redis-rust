@@ -195,6 +195,12 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
                 Resp::Integer(state.subscribed.len() as i64),
             ])
         }
+        "PING" if !state.subscribed.is_empty() => {
+            Resp::Array(vec![
+                Resp::Bulk(Some(b"pong".to_vec())),
+                Resp::Bulk(Some(Vec::new())),
+            ])
+        }
         _ if state.in_multi => {
             // queue the raw command; don't execute or touch the DB
             state.queue.push(args.to_vec());
