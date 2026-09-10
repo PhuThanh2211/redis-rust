@@ -207,7 +207,7 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
             }
 
             Resp::Array(vec![
-                Resp::Bulk(Some(b"unsubscribe".to_vec())),
+                Resp::Bulk(Some(b"subscribe".to_vec())),
                 Resp::Bulk(Some(channel.into_bytes())),
                 Resp::Integer(state.subscribed.len() as i64),
             ])
@@ -225,14 +225,14 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
                 let mut channels = store.channels.lock().unwrap();
                 if let Some(subs) = channels.get_mut(&channel) {
                     subs.retain(|s| s.client_id != state.client_id);
-                    if (subs.is_empty()) {
+                    if subs.is_empty() {
                         channels.remove(&channel);
                     }
                 }
             }
 
             Resp::Array(vec![
-                Resp::Bulk(Some(b"subscribe".to_vec())),
+                Resp::Bulk(Some(b"unsubscribe".to_vec())),
                 Resp::Bulk(Some(channel.into_bytes())),
                 Resp::Integer(state.subscribed.len() as i64),
             ])
