@@ -11,10 +11,17 @@ pub struct StreamEntry {
     pub fields: Vec<(String, String)>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ZSetEntry {
+    pub member: String,
+    pub score: f64,
+}
+
 pub enum RedisValue {
     Str(String, Option<Instant>),
     List(Vec<String>),
     Stream(Vec<StreamEntry>),
+    ZSet(Vec<ZSetEntry>),
 }
 
 pub struct ReplicaConn {

@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::resp::Resp;
-use crate::store::{RedisValue, Store, StreamEntry};
+use crate::store::{RedisValue, Store, StreamEntry, ZSetEntry};
 
 enum IdSpec {
     Explicit(u64, u64), // ms-seq
@@ -45,6 +45,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "CONFIG" => cmd_config(args, store),
         "KEYS" => cmd_keys(args, store),
         "PUBLISH" => cmd_publish(args, store),
+        "ZADD" => cmd_zadd(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -89,7 +90,7 @@ fn cmd_get(args: &[Vec<u8>], store: &Store) -> Resp {
             Resp::Bulk(None)
         }
         Some(RedisValue::Str(value, _)) => Resp::Bulk(Some(value.clone().into_bytes())),
-        Some(RedisValue::List(_)) | Some(RedisValue::Stream(_)) => wrong_type(),
+        Some(RedisValue::List(_)) | Some(RedisValue::Stream(_)) | Some(RedisValue::ZSet(_)) => wrong_type(),
         None => Resp::Bulk(None),
     }
 }
@@ -173,7 +174,7 @@ fn cmd_lrange(args: &[Vec<u8>], store: &Store) -> Resp {
                 slice.iter().map(|s| Resp::Bulk(Some(s.clone().into_bytes()))).collect(),
             )
         },
-        Some(RedisValue::Str(_, _)) | Some(RedisValue::Stream(_)) => wrong_type(),
+        Some(RedisValue::Str(_, _)) | Some(RedisValue::Stream(_)) | Some(RedisValue::ZSet(_)) => wrong_type(),
         None => Resp::Array(vec![]),
     }
 }
@@ -234,7 +235,7 @@ fn cmd_lpop(args: &[Vec<u8>], store: &Store) -> Resp {
                 }
             }
         }
-        Some(RedisValue::Str(_, _)) | Some(RedisValue::Stream(_)) => return wrong_type(),
+        Some(RedisValue::Str(_, _)) | Some(RedisValue::Stream(_)) | Some(RedisValue::ZSet(_)) => return wrong_type(),
         None => {
             return match count {
                 Some(_) => Resp::Array(vec![]),
@@ -354,6 +355,7 @@ fn cmd_type(args: &[Vec<u8>], store: &Store) -> Resp {
         Some(RedisValue::Str(_, _)) => "string",
         Some(RedisValue::List(_)) => "list",
         Some(RedisValue::Stream(_)) => "stream",
+        Some(RedisValue::ZSet(_)) => "sorted set",
         None => "none",
     };
 
@@ -741,6 +743,72 @@ fn cmd_publish(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 
     Resp::Integer(subscribers.len() as i64)
+}
+
+fn cmd_zadd(args: &[Vec<u8>], store: &Store) -> Resp {
+    // ZADD zset_key 10.0 zset_member
+    if args.len() < 4 {
+        return wrong_args("zadd");
+    }
+
+    let key = as_str(&args[1]);
+    let score_str = as_str(&args[2]);
+    let member = as_str(&args[3]);
+
+    let score: f64 = match score_str.parse() {
+        Ok(s) => s,
+        Err(_) => return Resp::Error("ERR value is not a valid float".into()),
+    };
+
+    let mut inner = store.inner.lock().unwrap();
+
+    let added = match inner.map.get_mut(&key) {
+        Some(RedisValue::ZSet(entries)) => {
+            if let Some(existing) = entries.iter_mut().find(|e| e.member == member) {
+                existing.score = score;
+
+                // Re-sort in case score changed: sort by score, tie-break by member
+                entries.sort_by(|a, b| {
+                    a.score
+                        .partial_cmp(&b.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| a.member.cmp(&b.member))
+                });
+                0 // ZERO members added
+
+            } else {
+                entries.push(ZSetEntry {
+                    member,
+                    score
+                });
+
+                entries.sort_by(|a, b| {
+                    a.score
+                        .partial_cmp(&b.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| a.member.cmp(&b.member))
+                });
+
+                1 // 1 new member added
+            }
+        }
+        Some(_) => {
+            return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into());
+        }
+        None => {
+            inner.map.insert(
+                key.clone(),
+                RedisValue::ZSet(vec![ZSetEntry {
+                    member,
+                    score
+                }]),
+            );
+            1
+        }
+    };
+
+    inner.touch(&key);
+    Resp::Integer(added)
 }
 
 fn empty_rdb() -> Vec<u8> {
