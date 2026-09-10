@@ -720,13 +720,27 @@ fn cmd_publish(args: &[Vec<u8>], store: &Store) -> Resp {
         return wrong_args("publish");
     }
 
-    let channel = as_str(&args[1]);
-    let count = store.channels.lock().unwrap()
-        .get(&channel)
-        .copied()
-        .unwrap_or(0);
+    let channel = args[1].clone();
+    let payload = args[2].clone();
 
-    Resp::Integer(count as i64)
+    // Take a snapshot of subscribers, then drop the map lock before writing.
+    let subscribers = {
+        let channels = store.channels.lock().unwrap();
+        let key = String::from_utf8_lossy(&channel).into_owned();
+        channels.get(&key).cloned().unwrap_or_default()
+    };
+
+    let message = Resp::Array(vec![
+        Resp::Bulk(Some(b"message".to_vec())),
+        Resp::Bulk(Some(channel)),
+        Resp::Bulk(Some(payload)),
+    ]).encode();
+
+    for sub in &subscribers {
+        let _ = sub.writer.lock().unwrap().write_all(&message);
+    }
+
+    Resp::Integer(subscribers.len() as i64)
 }
 
 fn empty_rdb() -> Vec<u8> {

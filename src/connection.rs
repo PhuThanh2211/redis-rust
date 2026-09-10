@@ -1,27 +1,33 @@
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
 use crate::commands::dispatch;
 use crate::resp::{read_command, Resp};
-use crate::store::{ReplicaConn, Store};
+use crate::store::{ReplicaConn, Store, Subscriber};
 
 struct ConnState {
     in_multi: bool,
     queue: Vec<Vec<Vec<u8>>>,
     watched: Vec<(String, u64)>,    // keys being watched
     subscribed: Vec<String>,        // channes this client is subscribed to
+    client_id: usize,
+    writer: Arc<Mutex<TcpStream>>,
 }
 
 pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
     println!("Accept New Connection");
-    let mut writer = stream.try_clone()?;
+    let writer = Arc::new(Mutex::new(stream.try_clone()?));
     let mut reader = BufReader::new(stream);
+    let client_id = store.next_client_id.fetch_add(1, Ordering::SeqCst);
 
     let mut state = ConnState {
         in_multi: false,
         queue: Vec::new(),
         watched: Vec::new(),
         subscribed: Vec::new(),
+        client_id,
+        writer: writer.clone(),
     };
 
     let mut my_replica_index: Option<usize> = None;
@@ -64,14 +70,14 @@ pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
                     }
                 }
 
-                writer.write_all(&reply.encode())?;
+                writer.lock().unwrap().write_all(&reply.encode())?;
 
                 // After PSYNC + RDB, this connection becomes a replica link
                 if cmd == "PSYNC" {
                     let mut reps = store.replicas.lock().unwrap();
                     my_replica_index = Some(reps.len());
                     reps.push(ReplicaConn{
-                        stream: writer.try_clone()?,
+                        stream: writer.lock().unwrap().try_clone()?,
                         ack: 0
                     });
                 }
@@ -93,6 +99,7 @@ pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
         }
     }
 
+    remove_client_subscriptions(&store, client_id);
     Ok(())
 }
 
@@ -190,7 +197,13 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
 
                 // New subscription for THIS client -> increment shared count.
                 let mut channels = store.channels.lock().unwrap();
-                *channels.entry(channel.clone()).or_insert(0) += 1;
+                channels
+                    .entry(channel.clone())
+                    .or_default()
+                    .push(Subscriber {
+                        client_id: state.client_id,
+                        writer: state.writer.clone(),
+                    })
             }
 
             Resp::Array(vec![
@@ -213,6 +226,15 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
         // All non-transaction commands go to the stateless dispatcher.
         _ => dispatch(args, store),
     }
+}
+
+fn remove_client_subscriptions(store: &Store, client_id: usize) {
+    let mut channels = store.channels.lock().unwrap();
+
+    channels.retain(|_, subscribers| {
+        subscribers.retain(|sub| sub.client_id != client_id);
+        !subscribers.is_empty()
+    });
 }
 
 fn is_write_command(cmd: &str) -> bool {

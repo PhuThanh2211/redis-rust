@@ -22,6 +22,12 @@ pub struct ReplicaConn {
     pub ack: usize,         // latest offset this replica has acknowledged
 }
 
+#[derive(Clone)]
+pub struct Subscriber {
+    pub client_id: usize,
+    pub writer: Arc<Mutex<TcpStream>>,
+}
+
 pub struct Inner {
     pub map: HashMap<String, RedisValue>,
     pub waiters: HashMap<String, VecDeque<u64>>, // FIFO tickets per key
@@ -56,7 +62,8 @@ pub struct Db {
     pub ack_cv: Condvar,                // notified when a replica ACKs
     pub config: Config,                 // <-- was: replica_of, dir, dbfilename, 4x append*
     pub aof: Mutex<Option<File>>,       // open append handle to the active AOF file
-    pub channels: Mutex<HashMap<String, usize>>, // channel -> number of subscribers
+    pub channels: Mutex<HashMap<String, Vec<Subscriber>>>,
+    pub next_client_id: AtomicUsize,
 }
 
 impl Db {
@@ -88,6 +95,7 @@ pub fn new_store(config: Config) -> Store {
         ack_cv: Condvar::new(),
         aof: Mutex::new(aof),
         channels: Mutex::new(HashMap::new()),
+        next_client_id: AtomicUsize::new(1),
         config,
     })
 }
