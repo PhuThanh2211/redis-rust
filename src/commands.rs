@@ -766,54 +766,14 @@ fn cmd_zadd(args: &[Vec<u8>], store: &Store) -> Resp {
         Err(_) => return Resp::Error("ERR value is not a valid float".into()),
     };
 
-    let mut inner = store.inner.lock().unwrap();
+    let mut guard = store.inner.lock().unwrap();
 
-    let added = match inner.map.get_mut(&key) {
-        Some(RedisValue::ZSet(entries)) => {
-            if let Some(existing) = entries.iter_mut().find(|e| e.member == member) {
-                existing.score = score;
-
-                // Re-sort in case score changed: sort by score, tie-break by member
-                entries.sort_by(|a, b| {
-                    a.score
-                        .partial_cmp(&b.score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| a.member.cmp(&b.member))
-                });
-                0 // ZERO members added
-
-            } else {
-                entries.push(ZSetEntry {
-                    member,
-                    score
-                });
-
-                entries.sort_by(|a, b| {
-                    a.score
-                        .partial_cmp(&b.score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| a.member.cmp(&b.member))
-                });
-
-                1 // 1 new member added
-            }
-        }
-        Some(_) => {
-            return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into());
-        }
-        None => {
-            inner.map.insert(
-                key.clone(),
-                RedisValue::ZSet(vec![ZSetEntry {
-                    member,
-                    score
-                }]),
-            );
-            1
-        }
+    let added = match guard.map.entry(key.clone()).or_insert_with(|| RedisValue::ZSet(Vec::new())) {
+        RedisValue::ZSet(entries) => zset_insert(entries, member, score),
+        _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
     };
 
-    inner.touch(&key);
+    guard.touch(&key);
     Resp::Integer(added)
 }
 
@@ -980,7 +940,16 @@ fn cmd_geoadd(args: &[Vec<u8>], store: &Store) -> Resp {
         ));
     }
 
-    Resp::Integer(1)
+    let score = 0.0;
+    let mut guard = store.inner.lock().unwrap();
+
+    let added = match guard.map.entry(key.clone()).or_insert_with(|| RedisValue::ZSet(Vec::new())) {
+        RedisValue::ZSet(entries) => zset_insert(entries, member, score),
+        _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+    };
+
+    guard.touch(&key);
+    Resp::Integer(added)
 }
 
 fn empty_rdb() -> Vec<u8> {
@@ -1014,6 +983,39 @@ fn collect_streams(guard: &std::sync::MutexGuard<'_, crate::store::Inner>,
         }
     }
     out
+}
+
+/// Insert or update a member's score in a sorted set, keeping it ordered
+/// by score (ascending), tie-broken lexicographically by member.
+/// Returns 1 if a new member was added, 0 if an existing one was updated.
+fn zset_insert(entries: &mut Vec<ZSetEntry>, member: String, score: f64) -> i64 {
+    if let Some(existing) = entries.iter_mut().find(|e| e.member == member) {
+        existing.score = score;
+
+        // Re-sort in case score changed: sort by score, tie-break by member
+        entries.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.member.cmp(&b.member))
+        });
+        0 // ZERO members added
+
+    } else {
+        entries.push(ZSetEntry {
+            member,
+            score
+        });
+
+        entries.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.member.cmp(&b.member))
+        });
+
+        1 // 1 new member added
+    }
 }
 
 /// Clamp a possibly-negative index into `[0, len]`.
