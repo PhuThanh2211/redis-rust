@@ -47,6 +47,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "PUBLISH" => cmd_publish(args, store),
         "ZADD" => cmd_zadd(args, store),
         "ZRANK" => cmd_zrank(args, store),
+        "ZRANGE" => cmd_zrange(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -822,7 +823,6 @@ fn cmd_zrank(args: &[Vec<u8>], store: &Store) -> Resp {
     let member = as_str(&args[2]);
 
     let guard = store.inner.lock().unwrap();
-
     match guard.map.get(&key) {
         Some(RedisValue::ZSet(entries)) => {
             match entries.iter().position(|e| e.member == member) {
@@ -832,6 +832,45 @@ fn cmd_zrank(args: &[Vec<u8>], store: &Store) -> Resp {
         }
         Some(_) => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
         None => Resp::Bulk(None),
+    }
+}
+
+fn cmd_zrange(args: &[Vec<u8>], store: &Store) -> Resp {
+    // ZRANGE racer_scores 0 2
+    if args.len() < 4 {
+        return wrong_args("zrange");
+    }
+
+    let key = as_str(&args[1]);
+    let start_idx: i64 = match as_str(&args[2]).parse() {
+        Ok(n) => n,
+        Err(_) => return Resp::Error("ERR value is not an integer or out of range".into())
+    };
+
+    let stop_idx: i64 = match as_str(&args[3]).parse() {
+        Ok(n) => n,
+        Err(_) => return Resp::Error("ERR value is not an integer or out of range".into())
+    };
+
+    let guard = store.inner.lock().unwrap();
+    match guard.map.get(&key) {
+        Some(RedisValue::ZSet(entries)) => {
+            let len = entries.len() as i64;
+            let start = normalize(start_idx, len);
+            let stop = normalize(stop_idx, len).min(len - 1);
+
+            if len == 0 || start > stop || start >= len {
+                return Resp::Bulk(Some(vec![]));
+            }
+
+            let slice = &entries[start as usize..=stop as usize];
+            Resp::Array(
+                slice.iter().map(|e| Resp::Bulk(Some(e.member.clone().into_bytes()))).collect(),
+            )
+
+        }
+        Some(_) => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+        None => Resp::Bulk(Some(vec![])),
     }
 }
 
