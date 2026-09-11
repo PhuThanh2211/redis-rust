@@ -50,6 +50,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "ZRANGE" => cmd_zrange(args, store),
         "ZCARD" => cmd_zcard(args, store),
         "ZSCORE" => cmd_zscore(args, store),
+        "ZREM" => cmd_zrem(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -903,10 +904,6 @@ fn cmd_zscore(args: &[Vec<u8>], store: &Store) -> Resp {
     let guard = store.inner.lock().unwrap();
     match guard.map.get(&key) {
         Some(RedisValue::ZSet(entries)) => {
-            if entries.is_empty() {
-                return Resp::Bulk(None);
-            }
-
             match entries.iter().find(|e| e.member == member) {
                 Some(entry) => Resp::Bulk(Some(entry.score.to_string().into_bytes())),
                 None => Resp::Bulk(None),
@@ -915,6 +912,42 @@ fn cmd_zscore(args: &[Vec<u8>], store: &Store) -> Resp {
         Some(_) => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
         None => Resp::Bulk(None),
     }
+}
+
+fn cmd_zrem(args: &[Vec<u8>], store: &Store) -> Resp {
+    // ZREM racer_scores "Royce"
+    if args.len() < 3 {
+        return wrong_args("zrem");
+    }
+
+    let key = as_str(&args[1]);
+    let member = as_str(&args[2]);
+
+    let mut guard = store.inner.lock().unwrap();
+    let removed = match guard.map.get_mut(&key) {
+        Some(RedisValue::ZSet(entries)) => {
+            let before = entries.len();
+            entries.retain(|e| e.member != member);
+            let removed = (before - entries.len()) as i64;
+
+            // Clean up the key entirely if the sorted set is now empty
+            if entries.is_empty() {
+                guard.map.remove(&key);
+            }
+
+            removed
+        },
+        Some(_) => {
+            return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into());
+        }
+        None => 0,
+    };
+
+    if removed > 0 {
+        guard.touch(&key);
+    }
+
+    Resp::Integer(removed)
 }
 
 fn empty_rdb() -> Vec<u8> {

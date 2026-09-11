@@ -263,7 +263,7 @@ fn remove_client_subscriptions(store: &Store, client_id: usize) {
 }
 
 fn is_write_command(cmd: &str) -> bool {
-    matches!(cmd, "SET" | "DEL" | "INCR" | "RPUSH" | "LPUSH" | "LPOP" | "XADD" | "ZADD")
+    matches!(cmd, "SET" | "DEL" | "INCR" | "RPUSH" | "LPUSH" | "LPOP" | "XADD" | "ZADD" | "ZREM")
 }
 
 fn encode_command(args: &[Vec<u8>]) -> Vec<u8> {
