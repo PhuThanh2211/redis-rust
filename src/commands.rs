@@ -46,6 +46,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "KEYS" => cmd_keys(args, store),
         "PUBLISH" => cmd_publish(args, store),
         "ZADD" => cmd_zadd(args, store),
+        "ZRANK" => cmd_zrank(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -809,6 +810,29 @@ fn cmd_zadd(args: &[Vec<u8>], store: &Store) -> Resp {
 
     inner.touch(&key);
     Resp::Integer(added)
+}
+
+fn cmd_zrank(args: &[Vec<u8>], store: &Store) -> Resp {
+    // ZRANK zset_key caz
+    if args.len() < 3 {
+        return wrong_args("zrank");
+    }
+
+    let key = as_str(&args[1]);
+    let member = as_str(&args[2]);
+
+    let guard = store.inner.lock().unwrap();
+
+    match guard.map.get(&key) {
+        Some(RedisValue::ZSet(entries)) => {
+            match entries.iter().position(|e| e.member == member) {
+                Some(rank) => Resp::Integer(rank as i64),
+                None => Resp::Bulk(None),
+            }
+        }
+        Some(_) => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+        None => Resp::Bulk(None),
+    }
 }
 
 fn empty_rdb() -> Vec<u8> {
