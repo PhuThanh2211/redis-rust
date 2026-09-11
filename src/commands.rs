@@ -51,6 +51,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "ZCARD" => cmd_zcard(args, store),
         "ZSCORE" => cmd_zscore(args, store),
         "ZREM" => cmd_zrem(args, store),
+        "GEOADD" => cmd_geoadd(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -948,6 +949,28 @@ fn cmd_zrem(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 
     Resp::Integer(removed)
+}
+
+fn cmd_geoadd(args: &[Vec<u8>], store: &Store) -> Resp {
+    // GEOADD places 11.5030378 48.164271 Munich
+    if args.len() < 5 {
+        return wrong_args("geoadd");
+    }
+
+    let key = as_str(&args[1]);
+    let member = as_str(&args[4]);
+
+    let longitude: f64 = match as_str(&args[2]).parse() {
+        Ok(n) => n,
+        Err(_) => return Resp::Error("ERR value is not an float or out of range".into())
+    };
+
+    let latitude: f64 = match as_str(&args[3]).parse() {
+        Ok(n) => n,
+        Err(_) => return Resp::Error("ERR value is not an float or out of range".into())
+    };
+
+    Resp::Integer(1)
 }
 
 fn empty_rdb() -> Vec<u8> {

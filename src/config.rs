@@ -63,7 +63,11 @@ impl Config {
 
         cfg
     }
-    
+
+    pub fn default_manifest_line(&self) -> String {
+        format!("file {}.1.incr.aof seq 1 type i\n", self.appendfilename)
+    }
+
     pub fn aof_enable(&self) -> bool {
         self.appendonly == "yes"
     }

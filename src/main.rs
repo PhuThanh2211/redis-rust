@@ -31,8 +31,7 @@ fn main() {
         }
 
         if !config.aof_manifest().exists() {
-            let manifest_line = format!("file {}.1.incr.aof seq 1 type i\n", config.appendfilename);
-            let _ = std::fs::write(config.aof_manifest(), manifest_line);
+            let _ = std::fs::write(config.aof_manifest(), config.default_manifest_line());
         }
     }
 
