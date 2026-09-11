@@ -860,7 +860,7 @@ fn cmd_zrange(args: &[Vec<u8>], store: &Store) -> Resp {
             let stop = normalize(stop_idx, len).min(len - 1);
 
             if len == 0 || start > stop || start >= len {
-                return Resp::Bulk(Some(vec![]));
+                return Resp::Array(vec![]);
             }
 
             let slice = &entries[start as usize..=stop as usize];
@@ -870,7 +870,7 @@ fn cmd_zrange(args: &[Vec<u8>], store: &Store) -> Resp {
 
         }
         Some(_) => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
-        None => Resp::Bulk(Some(vec![])),
+        None => Resp::Array(vec![]),
     }
 }
 
