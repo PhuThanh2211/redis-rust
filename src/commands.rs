@@ -951,6 +951,10 @@ fn cmd_zrem(args: &[Vec<u8>], store: &Store) -> Resp {
     Resp::Integer(removed)
 }
 
+const MIN_LONGITUDE: f64 = -180.0;
+const MAX_LONGITUDE: f64 = 180.0;
+const MIN_LATITUDE: f64 = -85.05112878;
+const MAX_LATITUDE: f64 = 85.05112878;
 fn cmd_geoadd(args: &[Vec<u8>], store: &Store) -> Resp {
     // GEOADD places 11.5030378 48.164271 Munich
     if args.len() < 5 {
@@ -960,15 +964,21 @@ fn cmd_geoadd(args: &[Vec<u8>], store: &Store) -> Resp {
     let key = as_str(&args[1]);
     let member = as_str(&args[4]);
 
-    let longitude: f64 = match as_str(&args[2]).parse() {
+    let lon: f64 = match as_str(&args[2]).parse() {
         Ok(n) => n,
-        Err(_) => return Resp::Error("ERR value is not an float or out of range".into())
+        Err(_) => return Resp::Error("ERR value is not an double or out of range".into())
     };
 
-    let latitude: f64 = match as_str(&args[3]).parse() {
+    let lat: f64 = match as_str(&args[3]).parse() {
         Ok(n) => n,
-        Err(_) => return Resp::Error("ERR value is not an float or out of range".into())
+        Err(_) => return Resp::Error("ERR value is not an double or out of range".into())
     };
+
+    if !(MIN_LONGITUDE..=MAX_LONGITUDE).contains(&lon) || !(MIN_LATITUDE..=MAX_LATITUDE).contains(&lat) {
+        return Resp::Error(format!(
+            "ERR invalid longitude,latitude pair {lon:.6},{lat:.6}"
+        ));
+    }
 
     Resp::Integer(1)
 }
