@@ -49,6 +49,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "ZRANK" => cmd_zrank(args, store),
         "ZRANGE" => cmd_zrange(args, store),
         "ZCARD" => cmd_zcard(args, store),
+        "ZSCORE" => cmd_zscore(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -887,6 +888,32 @@ fn cmd_zcard(args: &[Vec<u8>], store: &Store) -> Resp {
         Some(RedisValue::ZSet(entries)) => Resp::Integer(entries.len() as i64),
         Some(_) => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
         None => Resp::Integer(0),
+    }
+}
+
+fn cmd_zscore(args: &[Vec<u8>], store: &Store) -> Resp {
+    // ZSCORE zset_key "three"
+    if args.len() < 3 {
+        return wrong_args("zscore");
+    }
+
+    let key = as_str(&args[1]);
+    let member = as_str(&args[2]);
+
+    let guard = store.inner.lock().unwrap();
+    match guard.map.get(&key) {
+        Some(RedisValue::ZSet(entries)) => {
+            if entries.is_empty() {
+                return Resp::Bulk(None);
+            }
+
+            match entries.iter().find(|e| e.member == member) {
+                Some(entry) => Resp::Bulk(Some(entry.score.to_string().into_bytes())),
+                None => Resp::Bulk(None),
+            }
+        },
+        Some(_) => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+        None => Resp::Bulk(None),
     }
 }
 
