@@ -53,6 +53,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "ZSCORE" => cmd_zscore(args, store),
         "ZREM" => cmd_zrem(args, store),
         "GEOADD" => cmd_geoadd(args, store),
+        "GEOPOS " => cmd_geopos(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -947,6 +948,20 @@ fn cmd_geoadd(args: &[Vec<u8>], store: &Store) -> Resp {
 
     guard.touch(&key);
     Resp::Integer(added)
+}
+
+fn cmd_geopos(args: &[Vec<u8>], store: &Store) -> Resp {
+    // GEOPOS location_key London Munich
+    if args.len() < 5 {
+        return wrong_args("geoadd");
+    }
+
+    let key = as_str(&args[1]);
+
+    Resp::Array(vec![
+        Resp::Array(vec![Resp::Bulk(Some("0".into())), Resp::Bulk(Some("0".into()))]),
+        Resp::Array(vec![Resp::Bulk(Some("0".into())), Resp::Bulk(Some("0".into()))]),
+    ])
 }
 
 fn empty_rdb() -> Vec<u8> {
