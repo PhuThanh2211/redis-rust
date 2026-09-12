@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::resp::Resp;
 use crate::store::{RedisValue, Store, StreamEntry, ZSetEntry};
+use crate::geo::{MIN_LATITUDE, MAX_LATITUDE, MIN_LONGITUDE, MAX_LONGITUDE};
 
 enum IdSpec {
     Explicit(u64, u64), // ms-seq
@@ -911,10 +912,6 @@ fn cmd_zrem(args: &[Vec<u8>], store: &Store) -> Resp {
     Resp::Integer(removed)
 }
 
-const MIN_LONGITUDE: f64 = -180.0;
-const MAX_LONGITUDE: f64 = 180.0;
-const MIN_LATITUDE: f64 = -85.05112878;
-const MAX_LATITUDE: f64 = 85.05112878;
 fn cmd_geoadd(args: &[Vec<u8>], store: &Store) -> Resp {
     // GEOADD places 11.5030378 48.164271 Munich
     if args.len() < 5 {
@@ -940,7 +937,7 @@ fn cmd_geoadd(args: &[Vec<u8>], store: &Store) -> Resp {
         ));
     }
 
-    let score = 0.0;
+    let score = crate::geo::encode(lat, lon) as f64;
     let mut guard = store.inner.lock().unwrap();
 
     let added = match guard.map.entry(key.clone()).or_insert_with(|| RedisValue::ZSet(Vec::new())) {
