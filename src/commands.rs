@@ -53,7 +53,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "ZSCORE" => cmd_zscore(args, store),
         "ZREM" => cmd_zrem(args, store),
         "GEOADD" => cmd_geoadd(args, store),
-        "GEOPOS " => cmd_geopos(args, store),
+        "GEOPOS" => cmd_geopos(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
