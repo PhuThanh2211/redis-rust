@@ -1106,7 +1106,7 @@ fn cmd_acl(args: &[Vec<u8>], store: &Store) -> Resp {
 
             Resp::Array(vec![
                 Resp::Bulk(Some(b"flags".to_vec())),
-                Resp::Array(vec![])
+                Resp::Array(vec![Resp::Bulk(Some(b"nopass".to_vec()))])
             ])
         }
         other => Resp::Error(format!("ERR unknown ACL subcommand or wrong number of arguments for '{other}'")),
