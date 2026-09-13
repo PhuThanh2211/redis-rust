@@ -952,16 +952,38 @@ fn cmd_geoadd(args: &[Vec<u8>], store: &Store) -> Resp {
 
 fn cmd_geopos(args: &[Vec<u8>], store: &Store) -> Resp {
     // GEOPOS location_key London Munich
-    if args.len() < 5 {
-        return wrong_args("geoadd");
+    if args.len() < 2 {
+        return wrong_args("geopos");
     }
 
     let key = as_str(&args[1]);
+    let members = &args[2..];
 
-    Resp::Array(vec![
-        Resp::Array(vec![Resp::Bulk(Some("0".into())), Resp::Bulk(Some("0".into()))]),
-        Resp::Array(vec![Resp::Bulk(Some("0".into())), Resp::Bulk(Some("0".into()))]),
-    ])
+    let guard = store.inner.lock().unwrap();
+
+    let entries = match guard.map.get(&key) {
+        Some(RedisValue::ZSet(entries)) => Some(entries),
+        Some(_) => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+        None => None,
+    };
+
+    let results: Vec<Resp> = members.iter().map(|m| {
+        let member = as_str(m);
+        let found = entries
+            .and_then(|es| es.iter().find(|e| e.member == member))
+            .is_some();
+
+        if found {
+            Resp::Array(vec![
+                Resp::Bulk(Some(b"0".to_vec())),
+                Resp::Bulk(Some(b"0".to_vec())),
+            ])
+        } else {
+            Resp::NullArray
+        }
+    }).collect();
+
+    Resp::Array(results)
 }
 
 fn empty_rdb() -> Vec<u8> {
