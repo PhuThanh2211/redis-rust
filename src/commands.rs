@@ -54,6 +54,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "ZREM" => cmd_zrem(args, store),
         "GEOADD" => cmd_geoadd(args, store),
         "GEOPOS" => cmd_geopos(args, store),
+        "GEODIST" => cmd_geodist(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -986,6 +987,44 @@ fn cmd_geopos(args: &[Vec<u8>], store: &Store) -> Resp {
     }).collect();
 
     Resp::Array(results)
+}
+
+fn cmd_geopos(args: &[Vec<u8>], store: &Store) -> Resp {
+    // GEODIST places Munich Paris
+    if args.len() < 4 {
+        return wrong_args("geodist");
+    }
+
+    let key = as_str(&args[1]);
+    let member1 = as_str(&args[2]);
+    let member2 = as_str(&args[3]);
+
+    let guard = store.inner.lock().unwrap();
+
+    let entries = match guard.map.get(&key) {
+        Some(RedisValue::ZSet(entries)) => entries,
+        Some(_) => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+        None => return Resp::Bulk(None),
+    };
+
+    let score1 = entries.iter()
+        .find(|e| e.member == member1)
+        .map(|e| e.score);
+
+    let score2 = entries.iter()
+        .find(|e| e.member == member2)
+        .map(|e| e.score);
+
+    match (score1, score2) {
+        (Some(s1), Some(s2)) => {
+            let coords1= crate::geo::decode(s1 as u64);
+            let coords2= crate::geo::decode(s2 as u64);
+            let distance = crate::geo::haversine_distance(&coords1, &coords2);
+
+            Resp::Bulk(Some(format!("{:.4}", distance).into_bytes()))
+        },
+        _ => Resp::Bulk(None)
+    }
 }
 
 fn empty_rdb() -> Vec<u8> {

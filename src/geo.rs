@@ -70,3 +70,18 @@ pub fn decode(geo_code: u64) -> Coordinates {
 
     convert_grid_numbers_to_coordinates(grid_latitude_number, grid_longitude_number)
 }
+
+const EARTH_RADIUS_METERS: f64 = 6372797.560856;
+
+/// Great-circle distance between two (latitude, longitude) points, in meters.
+pub fn haversine_distance(a: &Coordinates, b: &Coordinates) -> f64 {
+    let lat1 = a.latitude.to_radians();
+    let lat2 = b.latitude.to_radians();
+    let lat_diff = (b.latitude - a.latitude).to_radians();
+    let lon_diff = (b.longitude - a.longitude).to_radians();
+
+    let h = (lat_diff / 2.0).sin().powi(2)
+        + lat1.cos() * lat2.cos() * (lon_diff / 2.0).sin().powi(2);
+
+    2.0 * EARTH_RADIUS_METERS * h.sqrt().asin()
+}
