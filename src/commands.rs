@@ -989,7 +989,7 @@ fn cmd_geopos(args: &[Vec<u8>], store: &Store) -> Resp {
     Resp::Array(results)
 }
 
-fn cmd_geopos(args: &[Vec<u8>], store: &Store) -> Resp {
+fn cmd_geodist(args: &[Vec<u8>], store: &Store) -> Resp {
     // GEODIST places Munich Paris
     if args.len() < 4 {
         return wrong_args("geodist");
