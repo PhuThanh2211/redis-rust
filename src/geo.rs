@@ -85,3 +85,13 @@ pub fn haversine_distance(a: &Coordinates, b: &Coordinates) -> f64 {
 
     2.0 * EARTH_RADIUS_METERS * h.sqrt().asin()
 }
+
+pub fn unit_to_meters(unit: &str) -> Option<f64> {
+    match unit.to_lowercase().as_str() {
+        "m" => Some(1.0),
+        "km" => Some(1000.0),
+        "mi" => Some(1609.34),
+        "ft" => Some(0.3048),
+        _ => None,
+    }
+}

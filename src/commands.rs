@@ -55,6 +55,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "GEOADD" => cmd_geoadd(args, store),
         "GEOPOS" => cmd_geopos(args, store),
         "GEODIST" => cmd_geodist(args, store),
+        "GEOSEARCH" => cmd_geosearch(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -1025,6 +1026,67 @@ fn cmd_geodist(args: &[Vec<u8>], store: &Store) -> Resp {
         },
         _ => Resp::Bulk(None)
     }
+}
+
+fn cmd_geosearch(args: &[Vec<u8>], store: &Store) -> Resp {
+    // GEOSEARCH key FROMLONLAT lon lat BYRADIUS radius unit
+    if args.len() < 8 {
+        return wrong_args("geosearch");
+    }
+
+    let key = as_str(&args[1]);
+
+    if as_str(&args[2]).to_uppercase() != "FROMLONLAT" {
+        return Resp::Error("ERR unsupported search option".into());
+    }
+    let lon: f64 = match as_str(&args[3]).parse() {
+        Ok(n) => n,
+        Err(_) => return Resp::Error("ERR value is not a valid float".into()),
+    };
+    let lat: f64 = match as_str(&args[4]).parse() {
+        Ok(n) => n,
+        Err(_) => return Resp::Error("ERR value is not a valid float".into()),
+    };
+    if as_str(&args[5]).to_uppercase() != "BYRADIUS" {
+        return Resp::Error("ERR unsupported search option".into());
+    }
+    let radius: f64 = match as_str(&args[6]).parse() {
+        Ok(n) => n,
+        Err(_) => return Resp::Error("ERR value is not a valid float".into()),
+    };
+
+    let unit = as_str(&args[7]);
+    let factor = match crate::geo::unit_to_meters(&unit) {
+        Some(f) => f,
+        None => return Resp::Error("ERR unsupported unit".into()),
+    };
+
+    let radius_meters = radius * factor;
+    let center = crate::geo::Coordinates {
+        latitude: lat,
+        longitude: lon
+    };
+
+    let guard = store.inner.lock().unwrap();
+
+    let entries = match guard.map.get(&key) {
+        Some(RedisValue::ZSet(entries)) => entries,
+        Some(_) => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()),
+        None => return Resp::Array(vec![]),
+    };
+
+    let matches: Vec<Resp> = entries.iter().filter_map(|entry| {
+        let coords = crate::geo::decode(entry.score as u64);
+        let distance = crate::geo::haversine_distance(&center, &coords);
+
+        if distance <= radius_meters {
+            Some(Resp::Bulk(Some(entry.member.clone().into_bytes())))
+        } else {
+            None
+        }
+    }).collect();
+
+    Resp::Array(matches)
 }
 
 fn empty_rdb() -> Vec<u8> {
