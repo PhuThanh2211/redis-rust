@@ -970,17 +970,19 @@ fn cmd_geopos(args: &[Vec<u8>], store: &Store) -> Resp {
     let results: Vec<Resp> = members.iter().map(|m| {
         let member = as_str(m);
         let found = entries
-            .and_then(|es| es.iter().find(|e| e.member == member))
-            .is_some();
+            .and_then(|es| es.iter().find(|e| e.member == member));
 
-        if found {
-            Resp::Array(vec![
-                Resp::Bulk(Some(b"0".to_vec())),
-                Resp::Bulk(Some(b"0".to_vec())),
-            ])
-        } else {
-            Resp::NullArray
+        match found {
+            Some(entry) => {
+                let coords = crate::geo::decode(entry.score as u64);
+                Resp::Array(vec![
+                    Resp::Bulk(Some(coords.longitude.to_string().into_bytes())),
+                    Resp::Bulk(Some(coords.latitude.to_string().into_bytes())),
+                ])
+            }
+            None => Resp::NullArray,
         }
+
     }).collect();
 
     Resp::Array(results)

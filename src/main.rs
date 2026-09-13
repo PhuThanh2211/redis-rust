@@ -8,7 +8,6 @@ mod replication;
 mod rdb;
 mod config;
 mod geo;
-mod decode;
 
 use std::fs::File;
 use std::io::BufReader;
