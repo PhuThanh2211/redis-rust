@@ -56,6 +56,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "GEOPOS" => cmd_geopos(args, store),
         "GEODIST" => cmd_geodist(args, store),
         "GEOSEARCH" => cmd_geosearch(args, store),
+        "ACL" => cmd_acl(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -1087,6 +1088,29 @@ fn cmd_geosearch(args: &[Vec<u8>], store: &Store) -> Resp {
     }).collect();
 
     Resp::Array(matches)
+}
+
+fn cmd_acl(args: &[Vec<u8>], store: &Store) -> Resp {
+    // GEOSEARCH key FROMLONLAT lon lat BYRADIUS radius unit
+    if args.len() < 2 {
+        return wrong_args("acl");
+    }
+
+    let sub = as_str(&args[1]).to_uppercase();
+    match sub.as_str() {
+        "WHOAMI" => Resp::Bulk(Some(b"default".to_vec())),
+        "GETUSER" => {
+            if args.len() < 3 {
+                return wrong_args("acl|getuser");
+            }
+
+            Resp::Array(vec![
+                Resp::Bulk(Some(b"flags".to_vec())),
+                Resp::Array(vec![])
+            ])
+        }
+        other => Resp::Error(format!("ERR unknown ACL subcommand or wrong number of arguments for '{other}'")),
+    }
 }
 
 fn empty_rdb() -> Vec<u8> {

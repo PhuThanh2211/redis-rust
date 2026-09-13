@@ -243,9 +243,6 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
                 Resp::Bulk(Some(Vec::new())),
             ])
         }
-        "ACL" => {
-            Resp::Bulk(Some(b"default".to_vec()))
-        }
         _ if state.in_multi => {
             // queue the raw command; don't execute or touch the DB
             state.queue.push(args.to_vec());
