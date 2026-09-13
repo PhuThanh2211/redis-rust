@@ -243,7 +243,7 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
                 Resp::Bulk(Some(Vec::new())),
             ])
         }
-        "ACL WHOAMI" => {
+        "ACL" => {
             Resp::Bulk(Some(b"default".to_vec()))
         }
         _ if state.in_multi => {
