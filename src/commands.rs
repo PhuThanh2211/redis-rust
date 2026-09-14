@@ -3,7 +3,7 @@ use std::fmt::format;
 use std::io::Write;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
+use sha2::{Sha256, Digest};
 use crate::resp::Resp;
 use crate::store::{RedisValue, Store, StreamEntry, ZSetEntry};
 use crate::geo::{MIN_LATITUDE, MAX_LATITUDE, MIN_LONGITUDE, MAX_LONGITUDE};
@@ -1100,17 +1100,48 @@ fn cmd_acl(args: &[Vec<u8>], store: &Store) -> Resp {
     match sub.as_str() {
         "WHOAMI" => Resp::Bulk(Some(b"default".to_vec())),
         "GETUSER" => {
+            // ACL GETUSER default
             if args.len() < 3 {
                 return wrong_args("acl|getuser");
             }
 
+            let password = store.default_user_password.lock().unwrap();
+
+            let flags = match *password {
+                None => vec![Resp::Bulk(Some(b"nopass".to_vec()))],
+                Some(_) => vec![]
+            };
+
+            let passwords = match &*password {
+                Some(hash) => vec![Resp::Bulk(Some(hash.clone().into_bytes()))],
+                None => vec![]
+            };
+
             Resp::Array(vec![
                 Resp::Bulk(Some(b"flags".to_vec())),
-                Resp::Array(vec![Resp::Bulk(Some(b"nopass".to_vec()))]),
+                Resp::Array(flags),
                 Resp::Bulk(Some(b"passwords".to_vec())),
-                Resp::Array(vec![]),
+                Resp::Array(passwords),
             ])
-        }
+        },
+        "SETUSER" => {
+            // ACL SETUSER default >mypassword
+            if args.len() < 4 {
+                return wrong_args("acl|setuser");
+            }
+
+            let rule = as_str(&args[3]);
+            if let Some(plain_password) = rule.strip_prefix('>') {
+                let mut hasher = Sha256::new();
+                hasher.update(plain_password.as_bytes());
+                let hash = format!("{:x}", hasher.finalize());
+
+                let mut password = store.default_user_password.lock().unwrap();
+                *password = Some(hash);
+            }
+
+            Resp::Simple("OK".into())
+        },
         other => Resp::Error(format!("ERR unknown ACL subcommand or wrong number of arguments for '{other}'")),
     }
 }

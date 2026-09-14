@@ -71,6 +71,7 @@ pub struct Db {
     pub aof: Mutex<Option<File>>,       // open append handle to the active AOF file
     pub channels: Mutex<HashMap<String, Vec<Subscriber>>>,
     pub next_client_id: AtomicUsize,
+    pub default_user_password: Mutex<Option<String>>, // SHA-256 hex hash, None = nopass
 }
 
 impl Db {
@@ -103,6 +104,7 @@ pub fn new_store(config: Config) -> Store {
         aof: Mutex::new(aof),
         channels: Mutex::new(HashMap::new()),
         next_client_id: AtomicUsize::new(1),
+        default_user_password: Mutex::new(None),
         config,
     })
 }
