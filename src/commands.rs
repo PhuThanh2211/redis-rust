@@ -57,6 +57,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "GEODIST" => cmd_geodist(args, store),
         "GEOSEARCH" => cmd_geosearch(args, store),
         "ACL" => cmd_acl(args, store),
+        "AUTH" => cmd_auth(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -1143,6 +1144,27 @@ fn cmd_acl(args: &[Vec<u8>], store: &Store) -> Resp {
             Resp::Simple("OK".into())
         },
         other => Resp::Error(format!("ERR unknown ACL subcommand or wrong number of arguments for '{other}'")),
+    }
+}
+
+fn cmd_auth(args: &[Vec<u8>], store: &Store) -> Resp {
+    // AUTH <username> <password>
+    if args.len() < 3 {
+        return wrong_args("auth");
+    }
+
+    let _username = as_str(&args[1]);
+    let password = as_str(&args[2]);
+
+    let mut hasher = Sha256::new();
+    hasher.update(password.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+
+    let stored = store.default_user_password.lock().unwrap();
+
+    match &*stored {
+        Some(stored_hash) if *stored_hash == hash => Resp::Simple("OK".into()),
+        _ => Resp::Error("WRONGPASS invalid username-password pair or user is disabled.".into())
     }
 }
 
