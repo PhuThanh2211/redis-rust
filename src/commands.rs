@@ -1224,10 +1224,32 @@ fn cmd_getbit(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 
     let key = as_str(&args[1]);
+    let offset: usize = match as_str(&args[2]).parse() {
+        Ok(n) => n,
+        Err(_) => return Resp::Error("ERR bit offset is not an integer or out of range".into()),
+    };
 
-    let inner = store.inner.lock().unwrap();
-    match inner.map.get(&key) {
-        Some(RedisValue::Str(_, _)) => Resp::Integer(1),
+    let byte_index = offset / 8;
+    let bit_index = 7 - (offset % 8);
+
+    let mut guard = store.inner.lock().unwrap();
+    if let Some(RedisValue::Str(_, Some(deadline))) = guard.map.get(&key) {
+        if Instant::now() >= *deadline {
+            guard.map.remove(&key);
+            return Resp::Integer(0);
+        }
+    }
+
+    match guard.map.get(&key) {
+        Some(RedisValue::Str(s, _)) => {
+            let bytes = s.as_bytes();
+            if byte_index >= bytes.len() {
+                Resp::Integer(0)
+            } else {
+                let bit = (bytes[byte_index] >> bit_index) & 1;
+                Resp::Integer(bit as i64)
+            }
+        }
         Some(_) => wrong_type(),
         None => Resp::Integer(0),
     }
