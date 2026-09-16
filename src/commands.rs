@@ -1165,7 +1165,7 @@ fn cmd_auth(args: &[Vec<u8>], store: &Store) -> Resp {
 
 fn cmd_setbit(args: &[Vec<u8>], store: &Store) -> Resp {
     // SETBIT bitmap_key 3 1
-    if args.len() < 3 {
+    if args.len() < 4 {
         return wrong_args("setbit");
     }
 
@@ -1220,7 +1220,7 @@ fn cmd_setbit(args: &[Vec<u8>], store: &Store) -> Resp {
 fn cmd_getbit(args: &[Vec<u8>], store: &Store) -> Resp {
     // GETBIT bit_key 2
     if args.len() < 3 {
-        return wrong_args("setbit");
+        return wrong_args("getbit");
     }
 
     let key = as_str(&args[1]);
