@@ -58,6 +58,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "GEOSEARCH" => cmd_geosearch(args, store),
         "ACL" => cmd_acl(args, store),
         "AUTH" => cmd_auth(args, store),
+        "SETBIT" => cmd_setbit(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -1159,6 +1160,60 @@ fn cmd_auth(args: &[Vec<u8>], store: &Store) -> Resp {
         Some(stored_hash) if *stored_hash == hash => Resp::Simple("OK".into()),
         _ => Resp::Error("WRONGPASS invalid username-password pair or user is disabled.".into())
     }
+}
+
+fn cmd_setbit(args: &[Vec<u8>], store: &Store) -> Resp {
+    // SETBIT bitmap_key 3 1
+    if args.len() < 3 {
+        return wrong_args("setbit");
+    }
+
+    let key = as_str(&args[1]);
+    let offset: usize = match as_str(&args[2]).parse() {
+        Ok(n) => n,
+        Err(_) => return Resp::Error("ERR bit offset is not an integer or out of range".into()),
+    };
+
+    let value: u8 = match as_str(&args[3]).as_str() {
+        "0" => 0,
+        "1" => 1,
+        _ => return Resp::Error("ERR bit is not an integer or out of range".into()),
+    };
+
+    let byte_index = offset / 8;
+    let bit_index = 7 - (offset % 8); // offset 0 = MSB of first byte
+    let mask: u8 = 1 << bit_index;
+
+    let mut inner = store.inner.lock().unwrap();
+    let entry = inner
+        .map
+        .entry(key.clone())
+        .or_insert_with(|| RedisValue::Str(String::new(), None));
+
+    let old_bit = match entry {
+        RedisValue::Str(s, _) => {
+            // SAFETY: bitmaps are raw bytes, not guaranteed valid UTF-8.
+            let bytes = unsafe { s.as_mut_vec() };
+
+            if byte_index >= bytes.len() {
+                bytes.resize(byte_index + 1, 0);
+            }
+
+            let old = (bytes[byte_index] >> bit_index) & 1;
+
+            if value == 1 {
+                bytes[byte_index] |= mask;
+            } else {
+                bytes[byte_index] &= !mask; // `mask` is already `u8`, so `!` is unambiguous
+            }
+
+            old as i64
+        }
+        _ => return wrong_type(),
+    };
+
+    inner.touch(&key);
+    Resp::Integer(old_bit)
 }
 
 fn sha256_hex(input: &str) -> String {
