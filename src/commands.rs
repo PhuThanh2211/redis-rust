@@ -1133,12 +1133,8 @@ fn cmd_acl(args: &[Vec<u8>], store: &Store) -> Resp {
 
             let rule = as_str(&args[3]);
             if let Some(plain_password) = rule.strip_prefix('>') {
-                let mut hasher = Sha256::new();
-                hasher.update(plain_password.as_bytes());
-                let hash = format!("{:x}", hasher.finalize());
-
                 let mut password = store.default_user_password.lock().unwrap();
-                *password = Some(hash);
+                *password = Some(sha256_hex(plain_password));
             }
 
             Resp::Simple("OK".into())
@@ -1155,10 +1151,7 @@ fn cmd_auth(args: &[Vec<u8>], store: &Store) -> Resp {
 
     let _username = as_str(&args[1]);
     let password = as_str(&args[2]);
-
-    let mut hasher = Sha256::new();
-    hasher.update(password.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
+    let hash = sha256_hex(&password);
 
     let stored = store.default_user_password.lock().unwrap();
 
@@ -1166,6 +1159,12 @@ fn cmd_auth(args: &[Vec<u8>], store: &Store) -> Resp {
         Some(stored_hash) if *stored_hash == hash => Resp::Simple("OK".into()),
         _ => Resp::Error("WRONGPASS invalid username-password pair or user is disabled.".into())
     }
+}
+
+fn sha256_hex(input: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 fn empty_rdb() -> Vec<u8> {

@@ -13,6 +13,7 @@ struct ConnState {
     subscribed: Vec<String>,        // channes this client is subscribed to
     client_id: usize,
     writer: Arc<Mutex<TcpStream>>,
+    authenticated: bool,
 }
 
 pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
@@ -28,6 +29,7 @@ pub fn handle(stream: TcpStream, store: Store) -> std::io::Result<()> {
         subscribed: Vec::new(),
         client_id,
         writer: writer.clone(),
+        authenticated: store.default_user_password.lock().unwrap().is_none(),
     };
 
     let mut my_replica_index: Option<usize> = None;
@@ -109,6 +111,10 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
     }
 
     let cmd = String::from_utf8_lossy(&args[0]).to_uppercase();
+
+    if !state.authenticated && cmd != "AUTH" {
+        return Resp::Error("NOAUTH Authentication required.".into());
+    }
 
     // Subscribed mode: only a small set of commands is allowed.
     if !state.subscribed.is_empty() && !is_allowed_in_subscribed(&cmd) {
@@ -242,6 +248,14 @@ fn handle_command(args: &[Vec<u8>], store: &Store, state: &mut ConnState) -> Res
                 Resp::Bulk(Some(b"pong".to_vec())),
                 Resp::Bulk(Some(Vec::new())),
             ])
+        }
+        "AUTH" => {
+            let reply = dispatch(args, store);
+            if matches!(reply, Resp::Simple(ref s) if s == "OK") {
+                state.authenticated = true;
+            }
+
+            reply
         }
         _ if state.in_multi => {
             // queue the raw command; don't execute or touch the DB
