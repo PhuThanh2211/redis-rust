@@ -59,6 +59,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "ACL" => cmd_acl(args, store),
         "AUTH" => cmd_auth(args, store),
         "SETBIT" => cmd_setbit(args, store),
+        "GETBIT" => cmd_getbit(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -1214,6 +1215,22 @@ fn cmd_setbit(args: &[Vec<u8>], store: &Store) -> Resp {
 
     inner.touch(&key);
     Resp::Integer(old_bit)
+}
+
+fn cmd_getbit(args: &[Vec<u8>], store: &Store) -> Resp {
+    // GETBIT bit_key 2
+    if args.len() < 3 {
+        return wrong_args("setbit");
+    }
+
+    let key = as_str(&args[1]);
+
+    let inner = store.inner.lock().unwrap();
+    match inner.map.get(&key) {
+        Some(RedisValue::Str(_, _)) => Resp::Integer(1),
+        Some(_) => wrong_type(),
+        None => Resp::Integer(0),
+    }
 }
 
 fn sha256_hex(input: &str) -> String {
