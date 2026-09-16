@@ -60,6 +60,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "AUTH" => cmd_auth(args, store),
         "SETBIT" => cmd_setbit(args, store),
         "GETBIT" => cmd_getbit(args, store),
+        "STRLEN" => cmd_strlen(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
