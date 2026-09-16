@@ -1255,6 +1255,29 @@ fn cmd_getbit(args: &[Vec<u8>], store: &Store) -> Resp {
     }
 }
 
+fn cmd_strlen(args: &[Vec<u8>], store: &Store) -> Resp {
+    // STRLEN bitmap_key
+    if args.len() < 2 {
+        return wrong_args("strlen");
+    }
+
+    let key = as_str(&args[1]);
+
+    let mut guard = store.inner.lock().unwrap();
+    if let Some(RedisValue::Str(_, Some(deadline))) = guard.map.get(&key) {
+        if Instant::now() >= *deadline {
+            guard.map.remove(&key);
+            return Resp::Integer(0);
+        }
+    }
+
+    match guard.map.get(&key) {
+        Some(RedisValue::Str(s, _)) => Resp::Integer(s.as_bytes().len() as i64),
+        Some(_) => wrong_type(),
+        None => Resp::Integer(0),
+    }
+}
+
 fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
