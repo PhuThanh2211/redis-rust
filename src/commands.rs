@@ -61,6 +61,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "SETBIT" => cmd_setbit(args, store),
         "GETBIT" => cmd_getbit(args, store),
         "STRLEN" => cmd_strlen(args, store),
+        "BITCOUNT" => cmd_bitcount(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -1274,6 +1275,62 @@ fn cmd_strlen(args: &[Vec<u8>], store: &Store) -> Resp {
 
     match guard.map.get(&key) {
         Some(RedisValue::Str(s, _)) => Resp::Integer(s.as_bytes().len() as i64),
+        Some(_) => wrong_type(),
+        None => Resp::Integer(0),
+    }
+}
+
+fn cmd_bitcount(args: &[Vec<u8>], store: &Store) -> Resp {
+    // BITCOUNT bitmap_key 0 1
+    if args.len() < 2 || args.len() == 3 {
+        return wrong_args("bitcount");
+    }
+
+    let key = as_str(&args[1]);
+
+    let mut guard = store.inner.lock().unwrap();
+    if let Some(RedisValue::Str(_, Some(deadline))) = guard.map.get(&key) {
+        if Instant::now() >= *deadline {
+            guard.map.remove(&key);
+            return Resp::Integer(0);
+        }
+    }
+
+    match guard.map.get(&key) {
+        Some(RedisValue::Str(s, _)) => {
+            let bytes = s.as_bytes();
+            let len = bytes.len() as i64;
+
+            if len == 0 {
+                return Resp::Integer(0);
+            }
+
+            let slice = if args.len() >= 4 {
+                let start: i64 = match as_str(&args[2]).parse() {
+                    Ok(n) => n,
+                    Err(_) => return Resp::Error("ERR value is not an integer or out of range".into()),
+                };
+                let end: i64 = match as_str(&args[3]).parse() {
+                    Ok(n) => n,
+                    Err(_) => return Resp::Error("ERR value is not an integer or out of range".into()),
+                };
+
+                let start = normalize(start, len);
+                let stop = normalize(end, len).min(len - 1);
+
+                if start > stop || start >= len {
+                    &[]
+                } else {
+                    &bytes[start as usize..=stop as usize]
+                }
+
+            } else {
+                bytes
+            };
+
+            let count: u32 = slice.iter().map(|b| b.count_ones()).sum();
+            Resp::Integer(count as i64)
+        }
         Some(_) => wrong_type(),
         None => Resp::Integer(0),
     }
