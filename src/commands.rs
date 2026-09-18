@@ -1376,6 +1376,18 @@ fn cmd_bitop(args: &[Vec<u8>], store: &Store) -> Resp {
                 }
             }
         }
+        "OR" => {
+            if !src_bytes.is_empty() {
+                for i in 0..max_len {
+                    let mut byte = src_bytes[0].get(i).copied().unwrap_or(0);
+                    for src in &src_bytes[1..] {
+                        byte |= src.get(i).copied().unwrap_or(0);
+                    }
+
+                    result[i] = byte;
+                }
+            }
+        }
         _ => return Resp::Error("ERR unknown or unsupported bitop operation".into()),
     }
 
