@@ -62,6 +62,7 @@ pub fn dispatch(args: &[Vec<u8>], store: &Store) -> Resp {
         "GETBIT" => cmd_getbit(args, store),
         "STRLEN" => cmd_strlen(args, store),
         "BITCOUNT" => cmd_bitcount(args, store),
+        "BITOP" => cmd_bitop(args, store),
         other => Resp::Error(format!("ERR unknown command '{other}'")),
     }
 }
@@ -1334,6 +1335,59 @@ fn cmd_bitcount(args: &[Vec<u8>], store: &Store) -> Resp {
         Some(_) => wrong_type(),
         None => Resp::Integer(0),
     }
+}
+
+fn cmd_bitop(args: &[Vec<u8>], store: &Store) -> Resp {
+    // BITOP AND dest key1 key2
+    if args.len() < 4 {
+        return wrong_args("bitop");
+    }
+
+    let op = as_str(&args[1]).to_uppercase();
+    let dest = as_str(&args[2]);
+    let src_keys: Vec<String> = args[3..].iter()
+        .map(|a| as_str(a))
+        .collect();
+
+    let mut guard = store.inner.lock().unwrap();
+
+    let mut src_bytes = Vec::with_capacity(src_keys.len());
+    for key in &src_keys {
+        match guard.map.get(key) {
+            Some(RedisValue::Str(s, _)) => src_bytes.push(s.as_bytes().to_vec()),
+            Some(_) => return wrong_type(),
+            None => src_bytes.push(Vec::new()),
+        }
+    }
+
+    let max_len = src_bytes.iter().map(|b| b.len()).max().unwrap_or(0);
+    let mut result = vec![0u8; max_len];
+
+    match op.as_str() {
+        "AND" => {
+            if !src_bytes.is_empty() {
+                for i in 0..max_len {
+                    let mut byte = src_bytes[0].get(i).copied().unwrap_or(0);
+                    for src in &src_bytes[1..] {
+                        byte &= src.get(i).copied().unwrap_or(0);
+                    }
+
+                    result[i] = byte;
+                }
+            }
+        }
+        _ => return Resp::Error("ERR unknown or unsupported bitop operation".into()),
+    }
+
+    let dest_len = result.len() as i64;
+    let s = unsafe {
+        String::from_utf8_unchecked(result)
+    };
+
+    guard.map.insert(dest.clone(), RedisValue::Str(s, None));
+    guard.touch(&dest);
+
+    Resp::Integer(dest_len)
 }
 
 fn sha256_hex(input: &str) -> String {
