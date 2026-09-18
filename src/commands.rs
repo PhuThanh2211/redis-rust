@@ -1377,15 +1377,32 @@ fn cmd_bitop(args: &[Vec<u8>], store: &Store) -> Resp {
             }
         }
         "OR" => {
-            if !src_bytes.is_empty() {
-                for i in 0..max_len {
-                    let mut byte = src_bytes[0].get(i).copied().unwrap_or(0);
-                    for src in &src_bytes[1..] {
-                        byte |= src.get(i).copied().unwrap_or(0);
-                    }
-
-                    result[i] = byte;
+            for i in 0..max_len {
+                let mut byte = 0u8;
+                for src in &src_bytes {
+                    byte |= src.get(i).copied().unwrap_or(0);
                 }
+
+                result[i] = byte;
+            }
+        }
+        "XOR" => {
+            for i in 0..max_len {
+                let mut byte = 0u8;
+                for src in &src_bytes {
+                    byte ^= src.get(i).copied().unwrap_or(0);
+                }
+
+                result[i] = byte;
+            }
+        }
+        "NOT" => {
+            if src_keys.len() != 1 {
+                return Resp::Error("ERR BITOP NOT must be called with a single source key.".into());
+            }
+
+            for i in 0..max_len {
+                result[i] = !src_bytes[0].get(i).copied().unwrap_or(0);
             }
         }
         _ => return Resp::Error("ERR unknown or unsupported bitop operation".into()),
